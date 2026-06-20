@@ -1,0 +1,39 @@
+{
+  "title": "Order Platform",
+  "uid": "order-platform",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Orders created / sec",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum(rate(op_events_total{event=\"OrderCreated\"}[1m]))", "legendFormat": "created/s"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Order end-to-end latency (p95)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(op_order_e2e_seconds_bucket[5m])) by (le))", "legendFormat": "p95 s"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Events by type",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "sum by (event) (rate(op_events_total[1m]))", "legendFormat": "{{event}}"}
+      ]
+    }
+  ]
+}
