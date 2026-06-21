@@ -1,4 +1,4 @@
-.PHONY: infra-up infra-down order inventory payment notification auth catalog load
+.PHONY: infra-up infra-down order inventory payment notification auth catalog webhook load
 
 infra-up:
 	docker compose up -d
@@ -11,6 +11,9 @@ auth:
 
 catalog:
 	uvicorn catalog_service.main:app --reload --port 8005
+
+webhook:
+	uvicorn stripe_webhook_service.main:app --reload --port 8006
 
 order:
 	uvicorn order_service.main:app --reload --port 8000

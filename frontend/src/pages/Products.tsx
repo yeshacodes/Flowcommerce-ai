@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { catalogApi, Product } from '../api/catalog'
-import { ordersApi } from '../api/orders'
 
 type Cart = Record<string, number>
 
@@ -12,7 +11,6 @@ export default function Products() {
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<Cart>({})
   const [loading, setLoading] = useState(true)
-  const [placing, setPlacing] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -36,18 +34,10 @@ export default function Products() {
 
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0)
 
-  const placeOrder = async () => {
-    setError('')
-    setPlacing(true)
-    try {
-      const items = Object.entries(cart).map(([sku, quantity]) => ({ sku, quantity }))
-      const order = await ordersApi.create(items)
-      navigate(`/orders/${order.order_id}`)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setPlacing(false)
-    }
+  const cartEmpty = cartCount === 0
+
+  const goToCheckout = () => {
+    navigate('/checkout', { state: { cart, products } })
   }
 
   return (
@@ -57,15 +47,21 @@ export default function Products() {
           <h1 className="text-xl font-semibold text-slate-900">Products</h1>
           <p className="text-sm text-slate-500 mt-0.5">Add items to your cart and place an order</p>
         </div>
-        {cartCount > 0 && (
+        {!loading && (
           <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-5 py-3 shadow-sm">
-            <span className="text-sm text-slate-600">{cartCount} item{cartCount !== 1 ? 's' : ''} · <strong>{fmt(cartTotal)}</strong></span>
+            {cartEmpty ? (
+              <span className="text-sm text-slate-400">Add at least one item to checkout</span>
+            ) : (
+              <span className="text-sm text-slate-600">
+                {cartCount} item{cartCount !== 1 ? 's' : ''} · <strong>{fmt(cartTotal)}</strong>
+              </span>
+            )}
             <button
-              onClick={placeOrder}
-              disabled={placing}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors"
+              onClick={goToCheckout}
+              disabled={cartEmpty}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors"
             >
-              {placing ? 'Placing…' : 'Place Order'}
+              Checkout →
             </button>
           </div>
         )}

@@ -13,6 +13,8 @@ export interface Order {
   created_at: string
   updated_at?: string
   items?: OrderItem[]
+  payment_intent_id?: string | null
+  payment_provider?: string
 }
 
 export interface OrderListResponse {
@@ -28,11 +30,25 @@ export interface AdminStats {
   outbox: { pending: number; published_last_hour: number }
 }
 
+export interface PaymentIntentResponse {
+  client_secret: string | null
+  total_cents: number
+}
+
 export const ordersApi = {
-  create: (items: OrderItem[]) =>
-    apiFetch<Order>(SERVICES.orders, '/orders', {
+  createPaymentIntent: (items: OrderItem[]) =>
+    apiFetch<PaymentIntentResponse>(SERVICES.orders, '/orders/payment-intent', {
       method: 'POST',
       body: JSON.stringify({ items }),
+    }),
+
+  create: (items: OrderItem[], paymentIntentId?: string) =>
+    apiFetch<Order>(SERVICES.orders, '/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        items,
+        ...(paymentIntentId ? { payment_intent_id: paymentIntentId } : {}),
+      }),
     }),
 
   list: (limit = 20, offset = 0) =>

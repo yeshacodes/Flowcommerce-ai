@@ -66,7 +66,11 @@ async def main():
                                 correlation_id=event.correlation_id,
                                 order_id=event.order_id,
                                 type="InventoryReserved",
-                                data={"items": items},
+                                data={
+                                    "items": items,
+                                    "total_cents": event.data.get("total_cents", 0),
+                                    "payment_intent_id": event.data.get("payment_intent_id"),
+                                },
                             ),
                         )
                         EVENTS.labels(SERVICE, "InventoryReserved", "ok").inc()

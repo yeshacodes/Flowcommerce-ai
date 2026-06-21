@@ -1,14 +1,19 @@
 -- Schema for the order platform. Loaded automatically by Postgres on first start.
 CREATE TABLE IF NOT EXISTS orders (
-    order_id        UUID PRIMARY KEY,
-    customer_id     TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | CONFIRMED | FAILED
-    idempotency_key TEXT UNIQUE,
-    correlation_id  UUID,
-    total_cents     INT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    order_id          UUID PRIMARY KEY,
+    customer_id       TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | CONFIRMED | FAILED
+    idempotency_key   TEXT UNIQUE,
+    correlation_id    UUID,
+    total_cents       INT,
+    payment_intent_id TEXT,                             -- Stripe PaymentIntent id (null for simulated)
+    payment_provider  TEXT NOT NULL DEFAULT 'simulated',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Migrate existing installations that pre-date these columns.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_provider  TEXT NOT NULL DEFAULT 'simulated';
 
 CREATE TABLE IF NOT EXISTS order_items (
     id                BIGSERIAL PRIMARY KEY,

@@ -82,7 +82,7 @@ def _send_email_sync(to: str, subject: str, html: str) -> None:
 
 
 async def _send_email(to: str, subject: str, html: str) -> None:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _send_email_sync, to, subject, html)
 
 
@@ -122,9 +122,9 @@ async def main():
                 )
                 log.info("Failure email sent → %s", customer_email)
 
-        except Exception:
+        except Exception as exc:
             # Never let an email failure break the saga or block Kafka offset commit
-            log.exception("Email send failed for order %s — continuing", order_id)
+            log.warning("Email send skipped for order %s — %s: %s", order_id, type(exc).__name__, exc)
 
     await run_consumer([Topics.ORDER_CONFIRMED, Topics.ORDER_FAILED], SERVICE, handle)
 

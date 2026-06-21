@@ -8,6 +8,7 @@ import Products from './pages/Products'
 import Orders from './pages/Orders'
 import OrderDetail from './pages/OrderDetail'
 import Admin from './pages/Admin'
+import Checkout from './pages/Checkout'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to="/products" replace />} />
               <Route path="/products" element={<Products />} />
+              <Route path="/checkout" element={<Checkout />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<OrderDetail />} />
               <Route path="/admin" element={<Admin />} />
