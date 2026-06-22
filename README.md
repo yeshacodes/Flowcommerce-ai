@@ -297,15 +297,27 @@ python scripts/smoke_test.py
 
 ## Screenshots
 
-> _Add screenshots here after running the demo. Suggested captures:_
+### Sign in
+A split-screen console: email/password on the left, brand statement and the platform's capabilities on the right.
+
+![FlowCommerce AI sign-in screen](docs/screenshots/login.png)
+
+### Products
+Catalog grid with per-product stock levels and a cart-aware checkout control that stays disabled until at least one item is added.
+
+![Products catalog page](docs/screenshots/products.png)
+
+### Order Detail — Confirmed
+Live saga timeline (Order Placed → Inventory Reserved → Payment Processed → Order Confirmed), itemized totals, and a Payment panel showing the real Stripe PaymentIntent ID and PAID status.
+
+![Order detail with confirmed saga timeline](docs/screenshots/order-detail-confirmed.png)
+
+### Still to capture
 
 | Screen | Description |
 |---|---|
-| `docs/screenshots/products.png` | Products page with cart showing item count and total |
 | `docs/screenshots/checkout-stripe.png` | Checkout page with Stripe Elements card form |
-| `docs/screenshots/order-confirmed.png` | Order Detail — CONFIRMED status with full saga timeline |
 | `docs/screenshots/order-failed.png` | Order Detail — FAILED status with rollback steps |
-| `docs/screenshots/payment-section.png` | Payment section showing Stripe provider and PaymentIntent ID |
 | `docs/screenshots/admin.png` | Admin dashboard with order counts and outbox lag |
 | `docs/screenshots/grafana.png` | Grafana dashboard — throughput, p95 latency, payment success rate |
 
