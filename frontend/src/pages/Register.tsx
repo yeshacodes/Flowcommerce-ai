@@ -18,7 +18,7 @@ export default function Register() {
     setLoading(true)
     try {
       const res = await authApi.register(email, password, name)
-      login({ email, customer_id: res.customer_id, token: res.access_token })
+      login({ email, customer_id: res.customer_id, token: res.access_token, is_admin: res.is_admin })
       navigate('/products')
     } catch (err: any) {
       setError(err.message)

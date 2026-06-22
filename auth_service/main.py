@@ -4,15 +4,21 @@ from uuid import uuid4
 
 import bcrypt as _bcrypt
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from shared.auth import TokenData, create_access_token, get_current_user
 from shared.db import get_pool
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("auth-service")
+
+limiter = Limiter(key_func=get_remote_address)
 
 
 def _hash_password(plain: str) -> str:
@@ -36,13 +42,34 @@ class LoginRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await get_pool()
+    pool = await get_pool()
+    # Migrate existing DBs that pre-date the is_admin column.
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false"
+        )
     log.info("auth-service started")
     yield
 
 
 app = FastAPI(title="Auth Service", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.state.limiter = limiter
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests — please slow down and try again shortly."},
+        headers={"Retry-After": "60"},
+    )
 
 
 @app.get("/health")
@@ -51,7 +78,8 @@ async def health():
 
 
 @app.post("/auth/register", status_code=201)
-async def register(req: RegisterRequest):
+@limiter.limit("10/minute")
+async def register(request: Request, req: RegisterRequest):
     pool = await get_pool()
     async with pool.acquire() as conn:
         existing = await conn.fetchval("SELECT user_id FROM users WHERE email=$1", req.email)
@@ -70,27 +98,45 @@ async def register(req: RegisterRequest):
             hashed,
         )
 
-    token = create_access_token(user_id=user_id, customer_id=customer_id, email=req.email)
+    token = create_access_token(
+        user_id=user_id, customer_id=customer_id, email=req.email, is_admin=False
+    )
     log.info("registered user %s", req.email)
-    return {"access_token": token, "token_type": "bearer", "customer_id": customer_id}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "customer_id": customer_id,
+        "is_admin": False,
+    }
 
 
 @app.post("/auth/login")
-async def login(req: LoginRequest):
+@limiter.limit("5/minute")
+async def login(request: Request, req: LoginRequest):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT user_id, customer_id, hashed_password FROM users WHERE email=$1", req.email
+            "SELECT user_id, customer_id, hashed_password, is_admin FROM users WHERE email=$1",
+            req.email,
         )
 
     if not row or not _verify_password(req.password, row["hashed_password"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+    is_admin = bool(row["is_admin"])
     token = create_access_token(
-        user_id=row["user_id"], customer_id=row["customer_id"], email=req.email
+        user_id=row["user_id"],
+        customer_id=row["customer_id"],
+        email=req.email,
+        is_admin=is_admin,
     )
-    log.info("login %s", req.email)
-    return {"access_token": token, "token_type": "bearer", "customer_id": row["customer_id"]}
+    log.info("login %s (admin=%s)", req.email, is_admin)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "customer_id": row["customer_id"],
+        "is_admin": is_admin,
+    }
 
 
 @app.get("/auth/me")

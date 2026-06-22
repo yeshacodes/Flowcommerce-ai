@@ -1,76 +1,426 @@
-# Distributed Order Processing Platform
+# FlowCommerce AI — Distributed Order Processing Platform
 
-An event-driven order pipeline: an API accepts orders, then independent services coordinate
-inventory, payment, and notification asynchronously over Kafka, with idempotency, retries,
-a dead-letter queue, and saga-based rollback on failure.
+A production-grade, event-driven order processing system built with Python microservices, Apache Kafka, and a React frontend. Designed to demonstrate distributed systems engineering concepts that come up in senior backend interviews: saga choreography, transactional outbox, idempotent consumers, and at-least-once delivery with exactly-once semantics.
+
+**Live demo flow:** Register → browse products → checkout with a real Stripe card → watch the order timeline update in real time as Kafka events propagate through inventory, payment, and notification services.
+
+---
+
+## What this project demonstrates
+
+This is not a tutorial follow-along. Every design decision below was made deliberately and can be defended in a technical interview. The system handles real failure modes: payment declines trigger automatic inventory release and order rollback, duplicate Kafka messages are safely deduplicated, and a crash between a Stripe API call and a database write is recovered automatically via webhook.
+
+---
 
 ## Architecture
-See `docs/architecture.md` for the sequence diagram and topics. Full design guide in
-`docs/BUILD_GUIDE.md`. Services: order, inventory, payment, notification. Infra: Kafka (KRaft),
-PostgreSQL, Redis.
 
-## What is implemented
-- Async happy path: order -> inventory reserve -> payment -> confirmation, all over Kafka.
-- Saga rollback: a failed payment releases reserved inventory and marks the order FAILED.
-- Idempotent consumers (dedupe via `processed_events`) and idempotent state transitions.
-- Retries with exponential backoff and a dead-letter topic for poison messages (`shared/kafka_utils.py`).
-- Optimistic-locked inventory reservation (conditional update + version bump).
-- Prometheus metrics on every service and an end-to-end order-latency histogram.
+Six independent microservices communicate exclusively through Kafka topics. No service calls another over HTTP — they react to events. The frontend talks only to the order and catalog HTTP APIs; everything behind that is async.
 
-## Quick start
+```
+Browser (React + Stripe Elements)
+    │
+    ├─ GET  :8005  catalog-service    ──→ PostgreSQL (products, inventory)
+    ├─ POST :8004  auth-service       ──→ PostgreSQL (users, JWT)
+    └─ POST :8000  order-service      ──→ PostgreSQL (orders, outbox)
+                       │
+                  Kafka (KRaft)
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+  inventory-      payment-      notification-
+   service         service        service
+  :8001            :8002           :8003
+(reserves       (Stripe PI /    (Resend email)
+ stock)          simulated)
+        │              │
+        └──────────────┘
+              │
+         order-service
+       (saga state machine)
+```
+
+### Kafka topics
+
+| Topic | Published by | Consumed by |
+|---|---|---|
+| `order.created` | order-service | inventory-service |
+| `inventory.reserved` | inventory-service | payment-service |
+| `inventory.failed` | inventory-service | order-service |
+| `payment.completed` | payment-service | order-service |
+| `payment.failed` | payment-service | order-service |
+| `order.confirmed` | order-service | notification-service |
+| `order.failed` | order-service | notification-service |
+| `release.inventory` | order-service | inventory-service |
+
+### Saga: happy path
+
+```
+order-service          inventory-service       payment-service        order-service
+     │                        │                      │                      │
+     │── OrderCreated ────────▶                      │                      │
+     │                        │── InventoryReserved ─▶                      │
+     │                        │                      │── PaymentCompleted ──▶
+     │                        │                      │                      │── status: CONFIRMED
+     │                        │                      │                      │── OrderConfirmed ──▶ notification
+```
+
+### Saga: payment failure rollback
+
+```
+     │                        │── InventoryReserved ─▶                      │
+     │                        │                      │── PaymentFailed ─────▶
+     │                        │                      │                      │── status: FAILED
+     │                        │◀─── ReleaseInventory ─────────────────────── │
+     │                        │  (inventory restored)                        │── OrderFailed ──▶ notification
+```
+
+---
+
+## Features
+
+### Distributed systems
+- **Saga choreography** — services coordinate via events, no central orchestrator
+- **Transactional outbox** — events committed atomically with business data, no dual-write risk
+- **Idempotent consumers** — `processed_events` table deduplicates at-least-once Kafka delivery
+- **State machine guards** — `WHERE status='PENDING'` on every state transition, safe under replay
+- **SAVEPOINT-based rollbacks** — asyncpg nested transactions roll back partial inventory without losing the processed-event claim
+- **Dead-letter topic** — poison messages after max retries go to `*.dlq` for inspection
+- **Stripe idempotency** — `idempotency_key=event_id` makes Stripe calls retry-safe
+- **Webhook backstop** — if payment-service crashes after the Stripe call, Stripe's own webhook retries recover the order
+
+### Product
+- User registration and login with JWT auth
+- Product catalog with live stock levels
+- Shopping cart → Stripe Elements checkout
+- Real-time order detail page with saga timeline (polls until terminal state)
+- Email notifications on confirmation and failure via Resend
+- Admin dashboard: order counts, recent orders, outbox lag
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| **API** | FastAPI, asyncpg, pydantic-settings |
+| **Messaging** | Apache Kafka (KRaft, no Zookeeper), aiokafka |
+| **Database** | PostgreSQL 16 |
+| **Auth** | JWT (python-jose), bcrypt |
+| **Payments** | Stripe PaymentIntents API, Stripe CLI |
+| **Email** | Resend |
+| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS 3 |
+| **Stripe UI** | Stripe Elements (CardElement) |
+| **Metrics** | Prometheus client, Grafana |
+| **Load test** | k6 |
+| **Infra** | Docker Compose |
+
+---
+
+## Distributed systems concepts explained
+
+### Why Kafka instead of direct HTTP calls between services?
+
+If inventory-service called payment-service over HTTP, a crash in payment-service would propagate directly back to the user. With Kafka, inventory-service publishes an event and moves on. Payment-service processes it when it's available. This decouples availability: any service can restart without the others knowing or caring.
+
+### What is the transactional outbox pattern and why does it matter?
+
+Without it, you'd do two separate writes: update the database, then publish to Kafka. If the service crashes between those two steps, the database change persists but the Kafka event is lost — downstream services never hear about it, and the order silently gets stuck.
+
+The outbox pattern writes both the business data and the event to PostgreSQL in the same transaction. A background poller reads unpublished rows and pushes them to Kafka, then marks them published. The database commit is the source of truth. If the poller crashes, it just re-reads unpublished rows on restart.
+
+### What is saga choreography and how does rollback work?
+
+A saga is a sequence of local transactions across multiple services, coordinated by events. In choreography (no orchestrator), each service listens for events and publishes its own.
+
+When payment fails, payment-service publishes `PaymentFailed`. Order-service hears it and publishes `ReleaseInventory`. Inventory-service hears that and adds the stock back. Each step is local and independent. If any step fails, Kafka's retry mechanism re-delivers the event until it succeeds.
+
+### How does idempotency work at scale?
+
+Kafka guarantees at-least-once delivery, meaning a message can be delivered more than once (on consumer restart, partition rebalance, etc.). Every consumer inserts `(event_id, consumer_name)` into `processed_events` with `ON CONFLICT DO NOTHING` before doing any work. If the same event arrives twice, the second insert is a no-op and the handler returns immediately. The state machine (`WHERE status='PENDING'`) is a second layer: even if dedup somehow failed, processing a CONFIRMED order as PENDING would update zero rows.
+
+### Why asyncpg SAVEPOINTs for inventory?
+
+Inventory-service needs to: (1) claim the event in `processed_events`, (2) try to reserve stock, (3) if stock is insufficient, roll back the reservation but still write `InventoryFailed` to the outbox. These are contradictory requirements for a single transaction.
+
+The solution is asyncpg nested transactions, which PostgreSQL implements as SAVEPOINTs. The outer transaction holds the event claim and outbox write. An inner transaction attempts the inventory updates. If it fails, only the inner transaction (SAVEPOINT) rolls back — the outer transaction stays alive and commits the failure event.
+
+---
+
+## Stripe checkout demo
+
+### Option A — Simulated payment (no keys needed)
+
 ```bash
-# 1) infra
+# 1. Start infrastructure and all backend services (see Local Setup below)
+
+# 2. Start the frontend
+cd frontend && npm run dev
+```
+
+Go to `http://localhost:5173` → **Register** → **Products** → add items → **Checkout →** → click **Place Order (simulated)** → the Order Detail page polls every 2 seconds until the saga completes and the status changes to **CONFIRMED** or **FAILED**.
+
+### Option B — Real Stripe card form
+
+**Step 1: Get Stripe test keys**
+
+Sign up at [stripe.com](https://stripe.com) (free, no real card needed).
+Go to Dashboard → Developers → API keys → copy the **Secret key** (`sk_test_...`) and **Publishable key** (`pk_test_...`).
+
+**Step 2: Configure environment**
+
+```bash
+# backend .env
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...    # from Step 4 below
+
+# frontend/.env  (create this file)
+VITE_STRIPE_PUBLIC_KEY=pk_test_...
+```
+
+**Step 3: Install Stripe CLI and forward webhooks**
+
+```bash
+# Install: https://stripe.com/docs/stripe-cli
+stripe login
+stripe listen --forward-to localhost:8006/webhooks/stripe
+# Copy the webhook signing secret printed above into STRIPE_WEBHOOK_SECRET in .env
+```
+
+**Step 4: Start all services**
+
+```bash
+make order       # restart to pick up new .env
+make payment     # restart to pick up STRIPE_SECRET_KEY
+make webhook     # stripe-webhook-service on :8006
+cd frontend && npm run dev
+```
+
+**Step 5: Place a Stripe order**
+
+1. Go to `http://localhost:5173` → **Register** → **Products** → add items
+2. Click **Checkout →**
+3. The Stripe card form appears (powered by Stripe Elements)
+4. Enter test card: **4242 4242 4242 4242** · any future date · any 3-digit CVC
+5. Click **Pay $X.XX**
+6. Stripe confirms the charge → order-service receives the event via Kafka → status → **CONFIRMED** in ~2 seconds
+7. Order Detail shows the **Payment** section with the real Stripe PaymentIntent ID
+
+**What success looks like:** Order Detail page shows a green CONFIRMED badge, the saga timeline shows all four steps completed, and the Payment section at the bottom shows the Stripe provider and a `pi_3...` PaymentIntent ID.
+
+**What failure looks like (inject a decline):** Set `PAYMENT_FAILURE_RATE=1.0` in `.env` and restart payment-service. Place a new order. The saga timeline will show Payment Failed and Order Failed in red, and inventory will be automatically released.
+
+### Test cards
+
+| Card | Result |
+|---|---|
+| `4242 4242 4242 4242` | Always succeeds |
+| `4000 0000 0000 9995` | Always declines — insufficient funds |
+
+---
+
+## Local setup
+
+### Prerequisites
+
+- Docker Desktop
+- Python 3.11+
+- Node.js 18+
+- (Optional) Stripe CLI for webhook forwarding
+
+### 1. Start infrastructure
+
+```bash
 docker compose up -d
+# Starts: Kafka (KRaft), PostgreSQL, Redis
+# PostgreSQL schema and seed data load automatically from init.sql
+```
 
-# 2) python env
-python -m venv .venv && source .venv/bin/activate
+### 2. Python environment
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env          # edit as needed
+```
 
-# 3) run services (each in its own terminal)
-make order          # order-service on :8000 (also serves /metrics)
-make inventory      # metrics on :8001
-make payment        # metrics on :8002
-make notification   # metrics on :8003
+### 3. Run backend services
 
-# 4) verify end-to-end
+Open a terminal for each:
+
+```bash
+make auth           # auth-service       :8004
+make catalog        # catalog-service    :8005
+make order          # order-service      :8000
+make inventory      # inventory-service  :8001
+make payment        # payment-service    :8002
+make notification   # notification-service :8003
+make webhook        # stripe-webhook-service :8006  (optional, Stripe only)
+```
+
+### 4. Run the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+# → http://localhost:5173
+```
+
+### 5. Verify end-to-end (CLI)
+
+```bash
 python scripts/smoke_test.py
+# Registers a fresh user, places an order, polls until CONFIRMED or FAILED.
+# Works without Stripe keys — uses the simulated payment path.
 ```
 
-## Observability (Phase 3)
-```bash
-docker compose -f docker-compose.observability.yml up -d
-# Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (dashboard auto-provisioned)
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `KAFKA_BOOTSTRAP` | `localhost:9092` | Kafka broker address |
+| `POSTGRES_DSN` | `postgresql://postgres:postgres@localhost:5432/orders` | Database connection |
+| `JWT_SECRET` | `change-me-in-production` | JWT signing secret |
+| `PAYMENT_FAILURE_RATE` | `0.2` | Fraction of payments that simulate failure (0.0–1.0) |
+| `STRIPE_SECRET_KEY` | _(empty)_ | Enables real Stripe charges when set |
+| `STRIPE_WEBHOOK_SECRET` | _(empty)_ | Enables webhook signature verification |
+| `RESEND_API_KEY` | _(empty)_ | Enables transactional email when set |
+| `VITE_STRIPE_PUBLIC_KEY` | _(empty)_ | Shows Stripe Elements in the frontend when set |
+
+---
+
+## Screenshots
+
+> _Add screenshots here after running the demo. Suggested captures:_
+
+| Screen | Description |
+|---|---|
+| `docs/screenshots/products.png` | Products page with cart showing item count and total |
+| `docs/screenshots/checkout-stripe.png` | Checkout page with Stripe Elements card form |
+| `docs/screenshots/order-confirmed.png` | Order Detail — CONFIRMED status with full saga timeline |
+| `docs/screenshots/order-failed.png` | Order Detail — FAILED status with rollback steps |
+| `docs/screenshots/payment-section.png` | Payment section showing Stripe provider and PaymentIntent ID |
+| `docs/screenshots/admin.png` | Admin dashboard with order counts and outbox lag |
+| `docs/screenshots/grafana.png` | Grafana dashboard — throughput, p95 latency, payment success rate |
+
+---
+
+## Design decisions
+
+### Choreography saga vs. orchestrator
+
+I chose choreography (services react to each other's events) over an orchestrator (a central service that tells each service what to do). The tradeoff: choreography is harder to trace end-to-end but more resilient — there is no single coordinator that can fail and block the whole pipeline. For an order platform where availability matters more than strict sequential control, this is the right call.
+
+The cost of choreography is visibility: you cannot look at one place and see the full state of a saga. I address this with correlation IDs threaded through every event, and the order-service acting as the state machine that aggregates outcomes.
+
+### Transactional outbox over direct Kafka publish
+
+Publishing to Kafka directly from a route handler creates a window where the database write commits but the Kafka publish fails (network blip, broker restart). The order is created but no downstream service ever sees it.
+
+The outbox pattern closes this window. Events are written to the `outbox` table in the same PostgreSQL transaction as the business data. A background poller reads unpublished rows and pushes them to Kafka. The worst case is duplicate delivery (the poller crashes after publishing but before marking the row published) — which is handled by idempotent consumers.
+
+### Idempotent consumers over exactly-once delivery
+
+Kafka's exactly-once delivery (`enable.idempotence=true` + transactions) adds complexity and coordinator overhead. Instead, every consumer inserts into `processed_events` with `ON CONFLICT DO NOTHING` before processing. This is simpler, works across any consumer implementation, and pairs naturally with state-machine guards (`WHERE status='PENDING'`) as a second safety layer.
+
+### asyncpg nested transactions (SAVEPOINTs) for inventory rollback
+
+The inventory-service must atomically claim a Kafka event, attempt to reserve stock across multiple SKUs, and — if any SKU is out of stock — roll back the partial reservation while still writing `InventoryFailed` to the outbox. These are contradictory within a single flat transaction.
+
+PostgreSQL SAVEPOINTs solve this cleanly. asyncpg automatically promotes nested `async with conn.transaction():` calls to SAVEPOINTs. The inner SAVEPOINT holds the inventory updates; if it rolls back, the outer transaction (event claim + outbox write) remains intact and commits.
+
+### Stripe idempotency key = Kafka event_id
+
+If payment-service crashes after the Stripe API call succeeds but before the outbox write commits, the Kafka event will be re-delivered and payment-service will call Stripe again. Using `event_id` as the Stripe idempotency key means the second call returns the same PaymentIntent (already charged) rather than charging the card twice. This is the most important correctness property in the payment flow.
+
+### Webhook service as reliability backstop
+
+Payment-service writes to the outbox synchronously in the same transaction that claims the Kafka event. In the common case, the webhook from Stripe arrives after the order is already CONFIRMED. If payment-service crashes in the narrow window between the Stripe call and the DB commit, Stripe retries the webhook to stripe-webhook-service, which publishes the event directly to Kafka. Order-service's `WHERE status='PENDING'` guard makes this duplicate safe.
+
+---
+
+## Promoting a user to admin (local development)
+
+Admin access is controlled by the `is_admin` column on the `users` table. New registrations always default to `false`. To promote your account:
+
+```sql
+-- Connect to the local Postgres container:
+docker exec -it <postgres-container-name> psql -U postgres -d orders
+
+-- Find your user:
+SELECT user_id, email, is_admin FROM users;
+
+-- Promote by email:
+UPDATE users SET is_admin = true WHERE email = 'you@example.com';
 ```
 
-## Load test
-```bash
-k6 run load_tests/order_load_test.js
-```
-Use this to fill the Results section. Set PAYMENT_FAILURE_RATE in `.env` (e.g. 0.2) to exercise rollback.
+Then **sign out and sign back in** — the JWT must be re-issued to carry the new `is_admin: true` claim. After that, the Admin link appears in the sidebar and `/admin/stats` is accessible.
+
+Non-admin users who navigate directly to `/admin` are redirected to `/products`. The backend returns `403 Forbidden` for any non-admin JWT hitting `/admin/stats`, so the route is doubly guarded.
 
 ## Results
-TODO (fill after the k6 load test):
-- Throughput: X orders/sec
-- Latency: p95 Y ms, p99 Z ms
-- Resilience: zero lost/duplicate orders under N% injected payment failures
-- Scaling: throughput from 1 to N consumers
 
-## Design decisions & tradeoffs
-- Saga (choreography) vs two-phase commit: chose saga for loose coupling and availability.
-- At-least-once delivery + idempotency: consumers dedupe by event_id; state transitions are
-  guarded (only a PENDING order transitions), so duplicate events are harmless.
-- Known limitation (good interview talking point): publishing happens after the DB commit, so a
-  crash in that window could drop a downstream event. The fix is a transactional outbox; left as
-  a documented next step.
-- Partitioning by order_id preserves per-order event ordering.
+> _Run the k6 load test and fill in these numbers:_
 
-## Demo
-TODO: 60-second Loom/GIF of an order flowing through, plus a failure recovering.
+```bash
+make load   # k6 run load_tests/order_load_test.js
+```
 
-## Remaining for Yesha (Phase 3 finish)
-1. Run the k6 load test and record throughput + p95/p99 into Results.
-2. Capture Grafana screenshots into `docs/`.
-3. Write up the Design Decisions section in her own words (this is what she defends in interviews).
-4. Record the 60-second demo.
-5. Optional: add OpenTelemetry spans for true distributed traces across services.
+| Metric | Result |
+|---|---|
+| Throughput | TODO orders/sec |
+| p50 latency (order → confirmed) | TODO ms |
+| p95 latency | TODO ms |
+| p99 latency | TODO ms |
+| Orders lost under 20% payment failure | TODO (expect 0) |
+| Duplicate orders under replay | TODO (expect 0) |
+| Max consumers tested | TODO |
+
+---
+
+## Observability
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+# Prometheus → http://localhost:9090
+# Grafana    → http://localhost:3000  (admin / admin)
+```
+
+Every service exposes a `/metrics` endpoint. Key metrics:
+- `orders_events_total` — event counts by service and type
+- `order_latency_seconds` — histogram from OrderCreated to OrderConfirmed
+- Outbox lag: `SELECT COUNT(*) FROM outbox WHERE published_at IS NULL`
+
+---
+
+## Project structure
+
+```
+order-platform/
+├── auth_service/          JWT registration and login
+├── catalog_service/       Product listing with stock levels
+├── order_service/         HTTP API + saga state machine + outbox poller
+├── inventory_service/     Stock reservation with SAVEPOINT rollback
+├── payment_service/       Stripe PaymentIntent + simulated fallback
+├── notification_service/  Resend transactional email
+├── stripe_webhook_service/ Stripe webhook receiver (reliability backstop)
+├── shared/
+│   ├── auth.py            JWT creation and FastAPI dependency
+│   ├── db.py              asyncpg connection pool
+│   ├── events.py          Pydantic event models and Kafka topic enum
+│   ├── kafka_utils.py     Producer, consumer, retry + DLQ logic
+│   ├── outbox.py          Outbox writer and background poller
+│   └── settings.py        pydantic-settings config with .env support
+├── frontend/              React 18 + TypeScript + Tailwind + Stripe Elements
+├── scripts/smoke_test.py  End-to-end CLI test
+├── load_tests/            k6 load test script
+├── init.sql               PostgreSQL schema + seed data
+├── docker-compose.yml     Kafka + PostgreSQL + Redis
+└── Makefile               One-command service launcher
+```

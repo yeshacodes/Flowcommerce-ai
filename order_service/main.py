@@ -4,17 +4,19 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from shared.auth import TokenData, get_current_user
+from shared.auth import TokenData, get_current_user, require_admin
 from shared.db import get_pool
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, run_consumer
 from shared.metrics import EVENTS, ORDER_LATENCY
 from shared.outbox import run_outbox_poller, write_outbox
+from shared.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("order-service")
@@ -24,6 +26,11 @@ producer = None
 consumer_task = None
 outbox_task = None
 
+_stripe_enabled = bool(settings.stripe_secret_key)
+if _stripe_enabled:
+    import stripe as _stripe
+    _stripe.api_key = settings.stripe_secret_key
+
 
 class OrderItem(BaseModel):
     sku: str
@@ -31,6 +38,11 @@ class OrderItem(BaseModel):
 
 
 class OrderRequest(BaseModel):
+    items: list[OrderItem]
+    payment_intent_id: str | None = None  # set by frontend after Stripe payment confirmed
+
+
+class PaymentIntentRequest(BaseModel):
     items: list[OrderItem]
 
 
@@ -96,7 +108,6 @@ async def handle_event(event: Event, topic: str) -> None:
                             UUID(event.order_id),
                         )
                     ]
-                    # Saga compensation: release reserved inventory
                     await write_outbox(
                         conn,
                         Topics.RELEASE_INVENTORY,
@@ -157,7 +168,6 @@ async def handle_event(event: Event, topic: str) -> None:
             else:
                 return
 
-    # Metrics-only: safe to observe outside the transaction
     if created_at:
         ORDER_LATENCY.observe((datetime.now(timezone.utc) - created_at).total_seconds())
 
@@ -166,6 +176,19 @@ async def handle_event(event: Event, topic: str) -> None:
 async def lifespan(app: FastAPI):
     global producer, consumer_task, outbox_task
     pool = await get_pool()
+
+    # Idempotent migration: add columns introduced after initial schema deployment.
+    # init.sql only runs on Postgres first-start; existing volumes miss these columns.
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT"
+        )
+        await conn.execute(
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS "
+            "payment_provider TEXT NOT NULL DEFAULT 'simulated'"
+        )
+    log.info("schema migration: payment columns ensured")
+
     producer = await get_producer()
     outbox_task = asyncio.create_task(run_outbox_poller(pool, producer))
     consumer_task = asyncio.create_task(
@@ -183,7 +206,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Order Service", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Returning a JSONResponse here keeps the response inside ExceptionMiddleware,
+    # which is inside CORSMiddleware — so CORS headers are present even on 500s.
+    log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/health")
@@ -194,6 +231,54 @@ async def health():
 @app.get("/metrics")
 async def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/orders/payment-intent")
+async def create_payment_intent(
+    req: PaymentIntentRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Called by the frontend checkout page before showing the Stripe card form.
+    Computes the order total, creates a Stripe PaymentIntent, and returns the
+    client_secret the browser needs to call stripe.confirmCardPayment().
+
+    If STRIPE_SECRET_KEY is not configured, returns client_secret=null so the
+    frontend can fall back to the simulated payment path.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        skus = [it.sku for it in req.items]
+        product_rows = await conn.fetch(
+            "SELECT sku, price_cents FROM products WHERE sku = ANY($1::text[])", skus
+        )
+        price_map = {r["sku"]: r["price_cents"] for r in product_rows}
+        missing = [s for s in skus if s not in price_map]
+        if missing:
+            raise HTTPException(status_code=422, detail=f"Unknown SKUs: {missing}")
+        total_cents = sum(price_map[it.sku] * it.quantity for it in req.items)
+
+    if not _stripe_enabled:
+        log.info("payment-intent: Stripe not configured, returning null client_secret")
+        return {"client_secret": None, "total_cents": total_cents}
+
+    loop = asyncio.get_running_loop()
+    pi = await loop.run_in_executor(
+        None,
+        lambda: _stripe.PaymentIntent.create(
+            amount=max(total_cents, 50),
+            currency="usd",
+            metadata={
+                "customer_id": current_user.customer_id,
+                "customer_email": current_user.email,
+            },
+        ),
+    )
+    log.info(
+        "payment-intent created: pi=%s amount=%d customer=%s",
+        pi.id, max(total_cents, 50), current_user.customer_id,
+    )
+    return {"client_secret": pi.client_secret, "total_cents": total_cents}
 
 
 @app.post("/orders", status_code=202)
@@ -226,6 +311,7 @@ async def create_order(
         total_cents = sum(price_map[it.sku] * it.quantity for it in req.items)
         order_id = uuid4()
         correlation_id = uuid4()
+        payment_provider = "stripe" if req.payment_intent_id else "simulated"
 
         event = Event(
             correlation_id=str(correlation_id),
@@ -236,18 +322,22 @@ async def create_order(
                 "customer_email": current_user.email,
                 "total_cents": total_cents,
                 "items": [i.model_dump() for i in req.items],
+                "payment_intent_id": req.payment_intent_id,  # None for smoke test / simulated path
             },
         )
 
         async with conn.transaction():
             await conn.execute(
-                "INSERT INTO orders(order_id, customer_id, status, idempotency_key, correlation_id, total_cents) "
-                "VALUES($1,$2,'PENDING',$3,$4,$5)",
+                "INSERT INTO orders(order_id, customer_id, status, idempotency_key, "
+                "correlation_id, total_cents, payment_intent_id, payment_provider) "
+                "VALUES($1,$2,'PENDING',$3,$4,$5,$6,$7)",
                 order_id,
                 current_user.customer_id,
                 idempotency_key,
                 correlation_id,
                 total_cents,
+                req.payment_intent_id,
+                payment_provider,
             )
             for it in req.items:
                 await conn.execute(
@@ -257,12 +347,13 @@ async def create_order(
                     it.quantity,
                     price_map[it.sku],
                 )
-            # Atomic with the order insert: if this process crashes before the
-            # outbox poller publishes, the row survives and is published on restart.
             await write_outbox(conn, Topics.ORDER_CREATED, event)
 
     EVENTS.labels(SERVICE, "OrderCreated", "ok").inc()
-    log.info("created order %s for customer %s", order_id, current_user.customer_id)
+    log.info(
+        "created order %s for customer %s provider=%s",
+        order_id, current_user.customer_id, payment_provider,
+    )
     return {"order_id": str(order_id), "status": "PENDING", "total_cents": total_cents}
 
 
@@ -309,7 +400,9 @@ async def get_order(order_id: str, current_user: TokenData = Depends(get_current
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT status, total_cents, created_at, updated_at, customer_id FROM orders WHERE order_id=$1",
+            "SELECT status, total_cents, created_at, updated_at, customer_id, "
+            "payment_intent_id, payment_provider "
+            "FROM orders WHERE order_id=$1",
             UUID(order_id),
         )
         if not row:
@@ -327,11 +420,13 @@ async def get_order(order_id: str, current_user: TokenData = Depends(get_current
         "created_at": row["created_at"].isoformat(),
         "updated_at": row["updated_at"].isoformat(),
         "items": [dict(i) for i in items],
+        "payment_intent_id": row["payment_intent_id"],
+        "payment_provider": row["payment_provider"] or "simulated",
     }
 
 
 @app.get("/admin/stats")
-async def admin_stats(_: TokenData = Depends(get_current_user)):
+async def admin_stats(_: TokenData = Depends(require_admin)):
     pool = await get_pool()
     async with pool.acquire() as conn:
         status_rows = await conn.fetch(

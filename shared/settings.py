@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     jwt_expiry_hours: int = 24
     resend_api_key: str = ""
     from_email: str = "onboarding@resend.dev"
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
