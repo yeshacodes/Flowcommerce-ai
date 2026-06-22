@@ -11,7 +11,11 @@ export default function Layout() {
   const navigate = useNavigate()
 
   const nav = user?.is_admin
-    ? [...baseNav, { to: '/admin', label: 'Admin', icon: AdminIcon }]
+    ? [
+        ...baseNav,
+        { to: '/admin', label: 'Admin', icon: AdminIcon },
+        { to: '/operations', label: 'Operations', icon: OperationsIcon },
+      ]
     : baseNav
 
   const handleLogout = () => {
@@ -111,6 +115,14 @@ function AdminIcon({ className = '' }: IconProps) {
       <circle cx="9" cy="5" r="1.6" fill="currentColor" stroke="none" />
       <circle cx="15" cy="12" r="1.6" fill="currentColor" stroke="none" />
       <circle cx="8" cy="19" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function OperationsIcon({ className = '' }: IconProps) {
+  return (
+    <svg className={`h-5 w-5 ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l2 5 4-12 2 7h6" />
     </svg>
   )
 }

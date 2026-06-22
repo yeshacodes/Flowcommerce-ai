@@ -17,7 +17,7 @@ This is not a tutorial follow-along. Every design decision below was made delibe
 Six independent microservices communicate exclusively through Kafka topics. No service calls another over HTTP — they react to events. The frontend talks only to the order and catalog HTTP APIs; everything behind that is async.
 
 ```
-Browser (React + Stripe Elements)
+Browser (React + Stripe Elements + Operations console)
     │
     ├─ GET  :8005  catalog-service    ──→ PostgreSQL (products, inventory)
     ├─ POST :8004  auth-service       ──→ PostgreSQL (users, JWT)
@@ -37,6 +37,15 @@ Browser (React + Stripe Elements)
               │
          order-service
        (saga state machine)
+
+  Observability plane (every service)
+  ────────────────────────────────────────────────
+  /health · /health/details · /metrics  +  JSON logs
+        │                                    with correlation_id / saga_id
+        ▼
+  Prometheus :9090  ──→  Grafana :3000  (5 dashboards)
+        ▲
+        └─ scrapes :8000–:8006 /metrics every 5s
 ```
 
 ### Kafka topics
@@ -87,6 +96,14 @@ order-service          inventory-service       payment-service        order-serv
 - **Dead-letter topic** — poison messages after max retries go to `*.dlq` for inspection
 - **Stripe idempotency** — `idempotency_key=event_id` makes Stripe calls retry-safe
 - **Webhook backstop** — if payment-service crashes after the Stripe call, Stripe's own webhook retries recover the order
+
+### Observability
+- **Standardized health** — `/health` + `/health/details` (dependency rollup, version, uptime) on every service
+- **Prometheus metrics** — HTTP, Kafka, and business metrics at `/metrics` on every service
+- **Structured JSON logging** — single-line logs carrying request/correlation/saga/order ids
+- **Correlation IDs** — propagated across HTTP headers and Kafka events end-to-end
+- **Grafana dashboards** — System Overview, Orders, Payments, Kafka, Service Health (auto-provisioned)
+- **In-app Operations console** — live system health, KPI cards, event feed, and event explorer
 
 ### Product
 - User registration and login with JWT auth
@@ -319,6 +336,7 @@ Live saga timeline (Order Placed → Inventory Reserved → Payment Processed �
 | `docs/screenshots/checkout-stripe.png` | Checkout page with Stripe Elements card form |
 | `docs/screenshots/order-failed.png` | Order Detail — FAILED status with rollback steps |
 | `docs/screenshots/admin.png` | Admin dashboard with order counts and outbox lag |
+| `docs/screenshots/operations.png` | Operations console — system health, KPI cards, event explorer |
 | `docs/screenshots/grafana.png` | Grafana dashboard — throughput, p95 latency, payment success rate |
 
 ---
@@ -398,16 +416,98 @@ make load   # k6 run load_tests/order_load_test.js
 
 ## Observability
 
+Production-grade monitoring is built in: standardized health endpoints,
+Prometheus metrics, structured JSON logs with correlation IDs, a Grafana
+dashboard suite, and an in-app Operations console.
+
+### Health endpoints
+
+Every service exposes two endpoints on its own port:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Fast liveness probe — `{"service": "...", "status": "healthy"}` |
+| `GET /health/details` | Dependency rollup, version, and uptime |
+
+```jsonc
+// GET /health/details
+{
+  "service": "order-service",
+  "status": "healthy",
+  "version": "1.0.0",
+  "dependencies": { "postgres": "healthy", "redis": "healthy", "kafka": "healthy" },
+  "uptime_seconds": 12345
+}
+```
+
+The HTTP services (auth :8004, catalog :8005, order :8000, webhook :8006) serve
+these on their main port. The consumer services (inventory :8001, payment :8002,
+notification :8003) run a small side server (`shared/ops_server.py`) exposing the
+same endpoints, so every service is uniform.
+
+### Metrics
+
+Every service exposes Prometheus metrics at `GET /metrics`:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `op_http_requests_total` | counter | service, method, path, status |
+| `op_http_request_duration_seconds` | histogram | service, method, path |
+| `op_http_errors_total` | counter | service, method, path |
+| `op_kafka_events_published_total` | counter | service, topic |
+| `op_kafka_events_consumed_total` | counter | service, topic, status |
+| `op_orders_created_total` / `op_orders_confirmed_total` / `op_orders_failed_total` | counter | service (+reason) |
+| `op_payments_succeeded_total` / `op_payments_failed_total` | counter | service, provider |
+| `op_stripe_request_duration_seconds` | histogram | — |
+| `op_inventory_reservations_total` | counter | service, result |
+| `op_email_notifications_sent_total` | counter | service, type, result |
+| `op_order_e2e_seconds` | histogram | — |
+
+### Structured logging & correlation IDs
+
+All logs are single-line JSON (`shared/logging_config.py`). HTTP middleware
+assigns a `request_id` and `correlation_id` per request; the Kafka consumer binds
+`correlation_id` / `saga_id` / `order_id` from each event. Every log line in a
+request or event handler automatically carries those ids:
+
+```json
+{"timestamp":"2026-06-22T15:04:33-0400","service":"payment-service","level":"INFO",
+ "correlation_id":"a467af7b…","saga_id":"a467af7b…","order_id":"5654ee60…",
+ "event":"PaymentProcessed","message":"Stripe payment OK for order 5654ee60…"}
+```
+
+Correlation IDs propagate across HTTP (`X-Correlation-ID` request/response
+headers) and Kafka (every `Event` carries `correlation_id` + `saga_id`).
+
+### Prometheus + Grafana
+
 ```bash
 docker compose -f docker-compose.observability.yml up -d
 # Prometheus → http://localhost:9090
-# Grafana    → http://localhost:3000  (admin / admin)
+# Grafana    → http://localhost:3000   (anonymous admin; dashboards auto-provisioned)
 ```
 
-Every service exposes a `/metrics` endpoint. Key metrics:
-- `orders_events_total` — event counts by service and type
-- `order_latency_seconds` — histogram from OrderCreated to OrderConfirmed
-- Outbox lag: `SELECT COUNT(*) FROM outbox WHERE published_at IS NULL`
+Prometheus scrapes all seven services every 5s (`observability/prometheus.yml`,
+via `host.docker.internal`). Five dashboards are auto-provisioned:
+
+| Dashboard | Panels |
+|---|---|
+| **System Overview** | requests/sec, error rate, avg latency, targets up, order pipeline, e2e latency p50/p95 |
+| **Orders** | created/confirmed/failed, success rate, saga failures by reason, inventory reservations |
+| **Payments** | success/failure totals, success rate, outcomes by provider, Stripe latency p50/p95 |
+| **Kafka / Events** | events published/consumed per sec, by topic/service, dead-lettered events |
+| **Service Health** | per-service up/down timeline, request rate, 5xx rate, latency p95 |
+
+### Operations console (in-app)
+
+Admins get an **Operations** page in the app (dark, Grafana-style, auto-refreshes
+every 5s) backed by three admin-only order-service endpoints — no Prometheus
+required to use it:
+
+- **System Health** — live 🟢/🟡/🔴 status per service + dependency chips (`/admin/system-health` aggregates every service's `/health/details` server-side)
+- **Metrics** — Orders Today, Success Rate, Failed Orders, Payment Success Rate, Events Processed, Avg Processing Time (`/admin/metrics-summary`)
+- **Recent Events** — live event feed from the outbox (`/admin/events`)
+- **Event Explorer** — click any event to inspect its `correlation_id`, `saga_id`, timestamps, and full payload
 
 ---
 

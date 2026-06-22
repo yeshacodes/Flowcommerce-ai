@@ -4,7 +4,9 @@ import logging
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
+from . import metrics
 from .events import Event, Topics
+from .logging_config import bind_context, get_service_name
 from .settings import settings
 
 log = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ async def get_producer() -> AIOKafkaProducer:
 async def publish(producer: AIOKafkaProducer, topic, event: Event) -> None:
     # Key by order_id so all events for one order land on the same partition (ordering).
     await producer.send_and_wait(str(topic), event.model_dump(), key=event.order_id)
+    metrics.KAFKA_PUBLISHED.labels(get_service_name(), str(topic)).inc()
 
 
 async def run_consumer(topics, group_id, handler):
@@ -50,10 +53,17 @@ async def run_consumer(topics, group_id, handler):
     try:
         async for msg in consumer:
             event = Event(**msg.value)
+            # Bind the saga/order ids so every log line in this handler is traceable.
+            bind_context(
+                correlation_id=event.correlation_id,
+                saga_id=event.saga_id,
+                order_id=event.order_id,
+            )
             attempt = 0
             while True:
                 try:
                     await handler(event, msg.topic)
+                    metrics.KAFKA_CONSUMED.labels(group_id, msg.topic, "ok").inc()
                     break
                 except Exception:
                     attempt += 1
@@ -68,6 +78,7 @@ async def run_consumer(topics, group_id, handler):
                                 "event": msg.value,
                             },
                         )
+                        metrics.KAFKA_CONSUMED.labels(group_id, msg.topic, "dlq").inc()
                         log.error("[%s] routed %s to DLQ after %d attempts", group_id, event.event_id, attempt)
                         break
                     # exponential backoff (scaled small for local dev)

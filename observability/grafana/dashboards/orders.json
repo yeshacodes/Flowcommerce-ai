@@ -1,0 +1,59 @@
+{
+  "title": "FlowCommerce — Orders",
+  "uid": "fc-orders",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "title": "Orders created (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(op_orders_created_total)", "legendFormat": "created"}]
+    },
+    {
+      "id": 2, "title": "Orders confirmed (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "green", "mode": "fixed"}}},
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "sum(op_orders_confirmed_total)", "legendFormat": "confirmed"}]
+    },
+    {
+      "id": 3, "title": "Orders failed (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}}},
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "sum(op_orders_failed_total)", "legendFormat": "failed"}]
+    },
+    {
+      "id": 4, "title": "Success rate %", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "100 * sum(op_orders_confirmed_total) / clamp_min(sum(op_orders_confirmed_total) + sum(op_orders_failed_total), 1)", "legendFormat": "success %"}]
+    },
+    {
+      "id": 5, "title": "Order outcomes / sec", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "sum(rate(op_orders_created_total[1m]))", "legendFormat": "created"},
+        {"expr": "sum(rate(op_orders_confirmed_total[1m]))", "legendFormat": "confirmed"},
+        {"expr": "sum(rate(op_orders_failed_total[1m]))", "legendFormat": "failed"}
+      ]
+    },
+    {
+      "id": 6, "title": "Saga failures by reason / sec", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [{"expr": "sum by (reason) (rate(op_orders_failed_total[5m]))", "legendFormat": "{{reason}}"}]
+    },
+    {
+      "id": 7, "title": "Inventory reservations / sec", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "targets": [{"expr": "sum by (result) (rate(op_inventory_reservations_total[1m]))", "legendFormat": "{{result}}"}]
+    }
+  ]
+}

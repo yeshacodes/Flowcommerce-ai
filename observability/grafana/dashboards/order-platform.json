@@ -1,38 +1,61 @@
 {
-  "title": "Order Platform",
-  "uid": "order-platform",
+  "title": "FlowCommerce — System Overview",
+  "uid": "fc-system-overview",
   "schemaVersion": 39,
-  "version": 1,
-  "time": {"from": "now-15m", "to": "now"},
+  "version": 2,
+  "refresh": "5s",
+  "time": {"from": "now-30m", "to": "now"},
   "panels": [
     {
-      "id": 1,
-      "title": "Orders created / sec",
-      "type": "timeseries",
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1, "title": "Requests / sec", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(rate(op_http_requests_total[1m]))", "legendFormat": "req/s"}]
+    },
+    {
+      "id": 2, "title": "Error rate %", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent", "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 5}]}}},
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "100 * sum(rate(op_http_errors_total[5m])) / clamp_min(sum(rate(op_http_requests_total[5m])), 1)", "legendFormat": "error %"}]
+    },
+    {
+      "id": 3, "title": "Avg latency (s)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "sum(rate(op_http_request_duration_seconds_sum[5m])) / clamp_min(sum(rate(op_http_request_duration_seconds_count[5m])), 1)", "legendFormat": "avg"}]
+    },
+    {
+      "id": 4, "title": "Targets up", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "sum(up{job=\"order-platform\"})", "legendFormat": "up"}]
+    },
+    {
+      "id": 5, "title": "Requests / sec by service", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [{"expr": "sum by (service) (rate(op_http_requests_total[1m]))", "legendFormat": "{{service}}"}]
+    },
+    {
+      "id": 6, "title": "Order pipeline (created/confirmed/failed per sec)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
       "targets": [
-        {"expr": "sum(rate(op_events_total{event=\"OrderCreated\"}[1m]))", "legendFormat": "created/s"}
+        {"expr": "sum(rate(op_orders_created_total[1m]))", "legendFormat": "created"},
+        {"expr": "sum(rate(op_orders_confirmed_total[1m]))", "legendFormat": "confirmed"},
+        {"expr": "sum(rate(op_orders_failed_total[1m]))", "legendFormat": "failed"}
       ]
     },
     {
-      "id": 2,
-      "title": "Order end-to-end latency (p95)",
-      "type": "timeseries",
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 7, "title": "Order end-to-end latency (p95 / p50)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
       "targets": [
-        {"expr": "histogram_quantile(0.95, sum(rate(op_order_e2e_seconds_bucket[5m])) by (le))", "legendFormat": "p95 s"}
-      ]
-    },
-    {
-      "id": 3,
-      "title": "Events by type",
-      "type": "timeseries",
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
-      "targets": [
-        {"expr": "sum by (event) (rate(op_events_total[1m]))", "legendFormat": "{{event}}"}
+        {"expr": "histogram_quantile(0.95, sum(rate(op_order_e2e_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.50, sum(rate(op_order_e2e_seconds_bucket[5m])) by (le))", "legendFormat": "p50"}
       ]
     }
   ]

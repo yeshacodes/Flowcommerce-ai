@@ -2,9 +2,19 @@ global:
   scrape_interval: 5s
 scrape_configs:
   - job_name: order-platform
+    metrics_path: /metrics
     static_configs:
-      - targets:
-          - host.docker.internal:8000   # order-service
-          - host.docker.internal:8001   # inventory-service
-          - host.docker.internal:8002   # payment-service
-          - host.docker.internal:8003   # notification-service
+      - targets: ["host.docker.internal:8000"]
+        labels: { service: order-service }
+      - targets: ["host.docker.internal:8001"]
+        labels: { service: inventory-service }
+      - targets: ["host.docker.internal:8002"]
+        labels: { service: payment-service }
+      - targets: ["host.docker.internal:8003"]
+        labels: { service: notification-service }
+      - targets: ["host.docker.internal:8004"]
+        labels: { service: auth-service }
+      - targets: ["host.docker.internal:8005"]
+        labels: { service: catalog-service }
+      - targets: ["host.docker.internal:8006"]
+        labels: { service: stripe-webhook-service }

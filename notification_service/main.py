@@ -3,13 +3,14 @@ import logging
 
 from shared.events import Event, Topics
 from shared.kafka_utils import run_consumer
-from shared.metrics import EVENTS, serve_metrics
+from shared.logging_config import configure_logging
+from shared.metrics import EMAILS_SENT, EVENTS
+from shared.ops_server import serve_ops
 from shared.settings import settings
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("notification-service")
-
 SERVICE = "notification-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 _resend_enabled = bool(settings.resend_api_key)
 
@@ -87,22 +88,25 @@ async def _send_email(to: str, subject: str, html: str) -> None:
 
 
 async def main():
-    serve_metrics(8003)
+    await serve_ops(SERVICE, 8003, deps=["kafka"])
 
     async def handle(event: Event, topic: str) -> None:
         order_id = event.order_id
         customer_email = event.data.get("customer_email")
         total_cents = event.data.get("total_cents", 0)
         reason = event.data.get("reason", "")
+        email_type = "confirmed" if topic == Topics.ORDER_CONFIRMED.value else "failed"
 
-        log.info("NOTIFY order=%s type=%s email=%s", order_id, event.type, customer_email or "none")
+        log.info(
+            "NOTIFY order=%s type=%s email=%s", order_id, event.type, customer_email or "none",
+            extra={"event": "NotificationReceived"},
+        )
         EVENTS.labels(SERVICE, event.type, "ok").inc()
 
-        if not _resend_enabled:
-            return
-
-        if not customer_email:
-            log.warning("No customer_email in event %s — skipping email", event.event_id)
+        if not _resend_enabled or not customer_email:
+            EMAILS_SENT.labels(SERVICE, email_type, "skipped").inc()
+            if not customer_email:
+                log.warning("No customer_email in event %s — skipping email", event.event_id)
             return
 
         try:
@@ -112,7 +116,7 @@ async def main():
                     f"Your order has been confirmed — {_fmt(total_cents)}",
                     _confirmed_html(order_id, total_cents),
                 )
-                log.info("Confirmation email sent → %s", customer_email)
+                log.info("Confirmation email sent → %s", customer_email, extra={"event": "NotificationSent"})
 
             elif topic == Topics.ORDER_FAILED.value:
                 await _send_email(
@@ -120,10 +124,13 @@ async def main():
                     "Your FlowCommerce order could not be completed",
                     _failed_html(order_id, reason),
                 )
-                log.info("Failure email sent → %s", customer_email)
+                log.info("Failure email sent → %s", customer_email, extra={"event": "NotificationSent"})
+
+            EMAILS_SENT.labels(SERVICE, email_type, "sent").inc()
 
         except Exception as exc:
             # Never let an email failure break the saga or block Kafka offset commit
+            EMAILS_SENT.labels(SERVICE, email_type, "error").inc()
             log.warning("Email send skipped for order %s — %s: %s", order_id, type(exc).__name__, exc)
 
     await run_consumer([Topics.ORDER_CONFIRMED, Topics.ORDER_FAILED], SERVICE, handle)

@@ -5,13 +5,19 @@ from uuid import UUID
 
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, publish, run_consumer
-from shared.metrics import EVENTS, serve_metrics
+from shared.logging_config import configure_logging
+from shared.metrics import (
+    EVENTS,
+    PAYMENTS_FAILED,
+    PAYMENTS_SUCCEEDED,
+    STRIPE_LATENCY,
+)
+from shared.ops_server import serve_ops
 from shared.settings import settings
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("payment-service")
-
 SERVICE = "payment-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 _use_stripe = bool(settings.stripe_secret_key)
 
@@ -79,21 +85,22 @@ async def _handle_stripe(event: Event, pool, producer) -> None:
             event.order_id, charge_cents, pm,
         )
         try:
-            pi = await loop.run_in_executor(
-                None,
-                lambda: stripe.PaymentIntent.create(
-                    amount=charge_cents,
-                    currency="usd",
-                    payment_method=pm,
-                    payment_method_types=["card"],
-                    confirm=True,
-                    metadata={
-                        "order_id": event.order_id,
-                        "correlation_id": event.correlation_id,
-                    },
-                    idempotency_key=event.event_id,
-                ),
-            )
+            with STRIPE_LATENCY.time():
+                pi = await loop.run_in_executor(
+                    None,
+                    lambda: stripe.PaymentIntent.create(
+                        amount=charge_cents,
+                        currency="usd",
+                        payment_method=pm,
+                        payment_method_types=["card"],
+                        confirm=True,
+                        metadata={
+                            "order_id": event.order_id,
+                            "correlation_id": event.correlation_id,
+                        },
+                        idempotency_key=event.event_id,
+                    ),
+                )
             success = pi.status == "succeeded"
             if success:
                 log.info(
@@ -136,7 +143,8 @@ async def _handle_stripe(event: Event, pool, producer) -> None:
                     ),
                 )
                 EVENTS.labels(SERVICE, "PaymentCompleted", "ok").inc()
-                log.info("Stripe payment OK for order %s", event.order_id)
+                PAYMENTS_SUCCEEDED.labels(SERVICE, "stripe").inc()
+                log.info("Stripe payment OK for order %s", event.order_id, extra={"event": "PaymentProcessed"})
             else:
                 await write_outbox(
                     conn,
@@ -149,7 +157,8 @@ async def _handle_stripe(event: Event, pool, producer) -> None:
                     ),
                 )
                 EVENTS.labels(SERVICE, "PaymentFailed", "ok").inc()
-                log.info("Stripe payment DECLINED for order %s (reason=%s)", event.order_id, reason)
+                PAYMENTS_FAILED.labels(SERVICE, "stripe").inc()
+                log.info("Stripe payment DECLINED for order %s (reason=%s)", event.order_id, reason, extra={"event": "PaymentFailed"})
 
 
 async def _handle_fake(event: Event, producer) -> None:
@@ -167,7 +176,8 @@ async def _handle_fake(event: Event, producer) -> None:
             ),
         )
         EVENTS.labels(SERVICE, "PaymentFailed", "ok").inc()
-        log.info("payment DECLINED (simulated) for order %s", event.order_id)
+        PAYMENTS_FAILED.labels(SERVICE, "simulated").inc()
+        log.info("payment DECLINED (simulated) for order %s", event.order_id, extra={"event": "PaymentFailed"})
     else:
         await publish(
             producer,
@@ -179,12 +189,13 @@ async def _handle_fake(event: Event, producer) -> None:
             ),
         )
         EVENTS.labels(SERVICE, "PaymentCompleted", "ok").inc()
-        log.info("payment OK (simulated) for order %s", event.order_id)
+        PAYMENTS_SUCCEEDED.labels(SERVICE, "simulated").inc()
+        log.info("payment OK (simulated) for order %s", event.order_id, extra={"event": "PaymentProcessed"})
 
 
 async def main():
     producer = await get_producer()
-    serve_metrics(8002)
+    await serve_ops(SERVICE, 8002, deps=["postgres", "kafka"])
 
     if _use_stripe:
         pool = await get_pool()

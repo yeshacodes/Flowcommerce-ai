@@ -1,0 +1,50 @@
+{
+  "title": "FlowCommerce — Payments",
+  "uid": "fc-payments",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "title": "Payments succeeded (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "green", "mode": "fixed"}}},
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(op_payments_succeeded_total)", "legendFormat": "succeeded"}]
+    },
+    {
+      "id": 2, "title": "Payments failed (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}}},
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+      "targets": [{"expr": "sum(op_payments_failed_total)", "legendFormat": "failed"}]
+    },
+    {
+      "id": 3, "title": "Payment success rate %", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+      "targets": [{"expr": "100 * sum(op_payments_succeeded_total) / clamp_min(sum(op_payments_succeeded_total) + sum(op_payments_failed_total), 1)", "legendFormat": "success %"}]
+    },
+    {
+      "id": 4, "title": "Payment outcomes / sec by provider", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "sum by (provider) (rate(op_payments_succeeded_total[1m]))", "legendFormat": "{{provider}} ok"},
+        {"expr": "sum by (provider) (rate(op_payments_failed_total[1m]))", "legendFormat": "{{provider}} fail"}
+      ]
+    },
+    {
+      "id": 5, "title": "Stripe call latency (p95 / p50)", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(op_stripe_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.50, sum(rate(op_stripe_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"}
+      ]
+    }
+  ]
+}

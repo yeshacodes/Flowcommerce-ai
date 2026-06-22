@@ -7,9 +7,12 @@ from pydantic import BaseModel
 
 from shared.auth import TokenData, get_current_user
 from shared.db import get_pool
+from shared.logging_config import configure_logging
+from shared.observability import attach_observability
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("catalog-service")
+SERVICE = "catalog-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 
 class ProductCreate(BaseModel):
@@ -42,11 +45,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+attach_observability(app, SERVICE, deps=["postgres"])
 
 
 @app.get("/products", response_model=list[ProductResponse])

@@ -14,9 +14,12 @@ from slowapi.util import get_remote_address
 
 from shared.auth import TokenData, create_access_token, get_current_user
 from shared.db import get_pool
+from shared.logging_config import configure_logging
+from shared.observability import attach_observability
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("auth-service")
+SERVICE = "auth-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -63,6 +66,9 @@ app.add_middleware(
 )
 
 
+attach_observability(app, SERVICE, deps=["postgres"])
+
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
@@ -70,11 +76,6 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": "Too many requests — please slow down and try again shortly."},
         headers={"Retry-After": "60"},
     )
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
 
 
 @app.post("/auth/register", status_code=201)

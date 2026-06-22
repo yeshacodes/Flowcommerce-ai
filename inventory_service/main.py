@@ -5,13 +5,14 @@ from uuid import UUID
 from shared.db import affected, get_pool
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, run_consumer
-from shared.metrics import EVENTS, serve_metrics
+from shared.logging_config import configure_logging
+from shared.metrics import EVENTS, INVENTORY_RESERVATIONS
+from shared.ops_server import serve_ops
 from shared.outbox import run_outbox_poller, write_outbox
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("inventory-service")
-
 SERVICE = "inventory-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 
 class _ReservationFailed(Exception):
@@ -21,7 +22,7 @@ class _ReservationFailed(Exception):
 async def main():
     producer = await get_producer()
     pool = await get_pool()
-    serve_metrics(8001)
+    await serve_ops(SERVICE, 8001, deps=["postgres", "kafka"])
 
     async def handle(event: Event, topic: str) -> None:
         if topic == Topics.ORDER_CREATED.value:
@@ -74,7 +75,11 @@ async def main():
                             ),
                         )
                         EVENTS.labels(SERVICE, "InventoryReserved", "ok").inc()
-                        log.info("reserved inventory for order %s", event.order_id)
+                        INVENTORY_RESERVATIONS.labels(SERVICE, "reserved").inc()
+                        log.info(
+                            "reserved inventory for order %s", event.order_id,
+                            extra={"event": "InventoryReserved"},
+                        )
                     else:
                         await write_outbox(
                             conn,
@@ -87,7 +92,11 @@ async def main():
                             ),
                         )
                         EVENTS.labels(SERVICE, "InventoryFailed", "ok").inc()
-                        log.info("insufficient stock for order %s", event.order_id)
+                        INVENTORY_RESERVATIONS.labels(SERVICE, "failed").inc()
+                        log.info(
+                            "insufficient stock for order %s", event.order_id,
+                            extra={"event": "InventoryFailed"},
+                        )
 
         elif topic == Topics.RELEASE_INVENTORY.value:
             items = event.data.get("items", [])
