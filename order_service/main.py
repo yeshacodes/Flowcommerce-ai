@@ -4,24 +4,43 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
 from shared.auth import TokenData, get_current_user, require_admin
 from shared.db import get_pool
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, run_consumer
-from shared.metrics import EVENTS, ORDER_LATENCY
+from shared.logging_config import bind_context, configure_logging
+from shared.metrics import (
+    EVENTS,
+    ORDER_LATENCY,
+    ORDERS_CONFIRMED,
+    ORDERS_CREATED,
+    ORDERS_FAILED,
+)
+from shared.observability import attach_observability
 from shared.outbox import run_outbox_poller, write_outbox
 from shared.settings import settings
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("order-service")
-
 SERVICE = "order-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
+
+# Internal map used by /admin/system-health to aggregate each service's
+# /health/details server-side (avoids cross-origin calls from the browser).
+OPS_SERVICES = {
+    "auth-service": "http://127.0.0.1:8004",
+    "catalog-service": "http://127.0.0.1:8005",
+    "order-service": "http://127.0.0.1:8000",
+    "inventory-service": "http://127.0.0.1:8001",
+    "payment-service": "http://127.0.0.1:8002",
+    "notification-service": "http://127.0.0.1:8003",
+    "stripe-webhook-service": "http://127.0.0.1:8006",
+}
 producer = None
 consumer_task = None
 outbox_task = None
@@ -89,6 +108,7 @@ async def handle_event(event: Event, topic: str) -> None:
                         ),
                     )
                     EVENTS.labels(SERVICE, "OrderConfirmed", "ok").inc()
+                    ORDERS_CONFIRMED.labels(SERVICE).inc()
 
             elif topic == Topics.PAYMENT_FAILED.value:
                 row = await conn.fetchrow(
@@ -135,6 +155,7 @@ async def handle_event(event: Event, topic: str) -> None:
                         ),
                     )
                     EVENTS.labels(SERVICE, "OrderFailed", "ok").inc()
+                    ORDERS_FAILED.labels(SERVICE, "payment").inc()
 
             elif topic == Topics.INVENTORY_FAILED.value:
                 row = await conn.fetchrow(
@@ -164,6 +185,7 @@ async def handle_event(event: Event, topic: str) -> None:
                         ),
                     )
                     EVENTS.labels(SERVICE, "OrderFailed", "ok").inc()
+                    ORDERS_FAILED.labels(SERVICE, "inventory").inc()
 
             else:
                 return
@@ -215,22 +237,16 @@ app.add_middleware(
 )
 
 
+# Exposes /health, /health/details, /metrics + request/correlation middleware.
+attach_observability(app, SERVICE, deps=["postgres", "kafka", "redis"])
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     # Returning a JSONResponse here keeps the response inside ExceptionMiddleware,
     # which is inside CORSMiddleware — so CORS headers are present even on 500s.
     log.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/metrics")
-async def metrics():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/orders/payment-intent")
@@ -312,6 +328,7 @@ async def create_order(
         order_id = uuid4()
         correlation_id = uuid4()
         payment_provider = "stripe" if req.payment_intent_id else "simulated"
+        bind_context(correlation_id=str(correlation_id), order_id=str(order_id))
 
         event = Event(
             correlation_id=str(correlation_id),
@@ -350,9 +367,11 @@ async def create_order(
             await write_outbox(conn, Topics.ORDER_CREATED, event)
 
     EVENTS.labels(SERVICE, "OrderCreated", "ok").inc()
+    ORDERS_CREATED.labels(SERVICE).inc()
     log.info(
         "created order %s for customer %s provider=%s",
         order_id, current_user.customer_id, payment_provider,
+        extra={"event": "OrderCreated"},
     )
     return {"order_id": str(order_id), "status": "PENDING", "total_cents": total_cents}
 
@@ -459,3 +478,120 @@ async def admin_stats(_: TokenData = Depends(require_admin)):
             "published_last_hour": outbox_last_hour,
         },
     }
+
+
+# ── Operations console endpoints (admin-only) ───────────────────────────────
+
+@app.get("/admin/system-health")
+async def system_health(_: TokenData = Depends(require_admin)):
+    """Aggregate every service's /health/details. Done server-side so the
+    browser makes one same-origin call instead of N cross-origin ones."""
+    async def probe(name: str, base: str) -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{base}/health/details")
+            if r.status_code == 200:
+                return {"service": name, **r.json()}
+            return {"service": name, "status": "down", "dependencies": {}}
+        except Exception:
+            return {"service": name, "status": "down", "dependencies": {}}
+
+    results = await asyncio.gather(
+        *(probe(name, base) for name, base in OPS_SERVICES.items())
+    )
+    healthy = sum(1 for r in results if r.get("status") == "healthy")
+    overall = (
+        "healthy" if healthy == len(results)
+        else "down" if healthy == 0
+        else "degraded"
+    )
+    return {"overall": overall, "services": results}
+
+
+@app.get("/admin/metrics-summary")
+async def metrics_summary(_: TokenData = Depends(require_admin)):
+    """Business KPIs derived from the orders table (no Prometheus required)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE created_at::date = current_date) AS orders_today,
+              COUNT(*) FILTER (WHERE status='CONFIRMED' AND created_at::date = current_date) AS confirmed_today,
+              COUNT(*) FILTER (WHERE status='FAILED' AND created_at::date = current_date) AS failed_today,
+              COUNT(*) FILTER (WHERE status='PENDING') AS pending,
+              -- Order processing latency = saga lifecycle duration (OrderCreated ->
+              -- OrderConfirmed), i.e. updated_at - created_at for confirmed orders,
+              -- reported in milliseconds. We exclude rows where the gap exceeds the
+              -- 5-minute saga SLA: those are orders that sat PENDING across a service
+              -- restart/outage and were confirmed long after creation — that gap is
+              -- downtime, not processing time, and would otherwise skew the average.
+              AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000)
+                FILTER (
+                  WHERE status='CONFIRMED'
+                    AND created_at::date = current_date
+                    AND updated_at - created_at < interval '5 minutes'
+                ) AS avg_ms
+            FROM orders
+            """
+        )
+        events_processed = await conn.fetchval(
+            "SELECT COUNT(*) FROM outbox WHERE published_at IS NOT NULL"
+        )
+
+    confirmed = row["confirmed_today"] or 0
+    failed = row["failed_today"] or 0
+    terminal = confirmed + failed
+    success_rate = round(confirmed / terminal * 100, 1) if terminal else 100.0
+    return {
+        "orders_today": row["orders_today"] or 0,
+        "confirmed_today": confirmed,
+        "failed_today": failed,
+        "pending": row["pending"] or 0,
+        "success_rate": success_rate,
+        # Payment success rate tracks order success in this system (a confirmed
+        # order is a captured payment; a failed one released inventory/payment).
+        "payment_success_rate": success_rate,
+        "events_processed": events_processed or 0,
+        # Milliseconds (or null when no confirmed orders yet). The frontend
+        # formats this into human-friendly units (ms / s / m s).
+        "avg_processing_ms": round(row["avg_ms"]) if row["avg_ms"] else None,
+    }
+
+
+@app.get("/admin/events")
+async def recent_events(
+    _: TokenData = Depends(require_admin),
+    limit: int = 50,
+):
+    """Recent events from the transactional outbox — the event log that powers
+    the Recent Events feed and Event Explorer (correlation_id / saga_id / payload)."""
+    if limit > 200:
+        limit = 200
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, topic, key, payload, created_at, published_at "
+            "FROM outbox ORDER BY id DESC LIMIT $1",
+            limit,
+        )
+    events = []
+    for r in rows:
+        payload = r["payload"]
+        if isinstance(payload, str):
+            import json as _json
+            payload = _json.loads(payload)
+        events.append({
+            "id": r["id"],
+            "topic": r["topic"],
+            "order_id": payload.get("order_id"),
+            "correlation_id": payload.get("correlation_id"),
+            "saga_id": payload.get("saga_id"),
+            "event_id": payload.get("event_id"),
+            "type": payload.get("type"),
+            "occurred_at": payload.get("occurred_at"),
+            "created_at": r["created_at"].isoformat(),
+            "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+            "payload": payload,
+        })
+    return {"events": events}

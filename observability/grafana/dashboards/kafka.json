@@ -1,0 +1,47 @@
+{
+  "title": "FlowCommerce — Kafka / Events",
+  "uid": "fc-kafka",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "title": "Events published / sec", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(rate(op_kafka_events_published_total[1m]))", "legendFormat": "published/s"}]
+    },
+    {
+      "id": 2, "title": "Events consumed / sec", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+      "targets": [{"expr": "sum(rate(op_kafka_events_consumed_total[1m]))", "legendFormat": "consumed/s"}]
+    },
+    {
+      "id": 3, "title": "Dead-lettered events (total)", "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}}},
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+      "targets": [{"expr": "sum(op_kafka_events_consumed_total{status=\"dlq\"})", "legendFormat": "dlq"}]
+    },
+    {
+      "id": 4, "title": "Published / sec by topic", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [{"expr": "sum by (topic) (rate(op_kafka_events_published_total[1m]))", "legendFormat": "{{topic}}"}]
+    },
+    {
+      "id": 5, "title": "Consumed / sec by service", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [{"expr": "sum by (service) (rate(op_kafka_events_consumed_total[1m]))", "legendFormat": "{{service}}"}]
+    },
+    {
+      "id": 6, "title": "Failed event processing (DLQ) / sec by topic", "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "targets": [{"expr": "sum by (topic) (rate(op_kafka_events_consumed_total{status=\"dlq\"}[5m]))", "legendFormat": "{{topic}}"}]
+    }
+  ]
+}

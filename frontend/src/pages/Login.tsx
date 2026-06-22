@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
+import AuthBrandPanel from '../components/AuthBrandPanel'
 
 export default function Login() {
   const { login } = useAuth()
@@ -27,64 +28,65 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">
-            FlowCommerce<span className="text-blue-600">AI</span>
-          </h1>
-          <p className="text-slate-500 mt-1 text-sm">Sign in to your account</p>
-        </div>
+    <div className="grid min-h-screen lg:grid-cols-2">
+      {/* Form half */}
+      <div className="flex items-center justify-center bg-white px-6 py-12">
+        <div className="w-full max-w-sm">
+          <div className="mb-9">
+            <div className="mb-8 flex items-center">
+              <span className="text-lg font-bold tracking-tight text-obsidian">FlowCommerce</span>
+              <span className="ml-1 text-lg font-bold text-ember">AI</span>
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-obsidian">Sign in</h1>
+            <p className="mt-1.5 text-sm text-ash">Welcome back to your commerce console.</p>
+          </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+              <div className="rounded-input border border-ember/30 bg-ember/5 px-4 py-3 text-sm text-ember-hot">
                 {error}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+              <label className="mb-1.5 block text-[13px] font-medium text-obsidian">Email</label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="you@example.com"
+                className="field"
+                placeholder="you@company.com"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+              <label className="mb-1.5 block text-[13px] font-medium text-obsidian">Password</label>
               <input
                 type="password"
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="field"
                 placeholder="••••••••"
               />
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-4 rounded-lg text-sm transition-colors"
-            >
+            <button type="submit" disabled={loading} className="btn-primary btn-lg w-full">
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
-        </div>
 
-        <p className="text-center text-sm text-slate-500 mt-6">
-          No account?{' '}
-          <Link to="/register" className="text-blue-600 hover:underline font-medium">
-            Create one
-          </Link>
-        </p>
+          <p className="mt-6 text-center text-sm text-ash">
+            No account?{' '}
+            <Link to="/register" className="font-semibold text-ember hover:text-ember-hot">
+              Create one
+            </Link>
+          </p>
+        </div>
       </div>
+
+      <AuthBrandPanel />
     </div>
   )
 }

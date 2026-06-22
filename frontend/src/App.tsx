@@ -8,6 +8,7 @@ import Products from './pages/Products'
 import Orders from './pages/Orders'
 import OrderDetail from './pages/OrderDetail'
 import Admin from './pages/Admin'
+import Operations from './pages/Operations'
 import Checkout from './pages/Checkout'
 
 function AdminRoute() {
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/orders/:id" element={<OrderDetail />} />
               <Route element={<AdminRoute />}>
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/operations" element={<Operations />} />
               </Route>
             </Route>
           </Route>

@@ -3,4 +3,58 @@
 @tailwind utilities;
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+html, body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: #f7f7f8;
+  color: #0c0c0c;
+}
+
+@layer components {
+  /* ── Pill buttons ─────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill font-semibold
+           transition-all duration-150 select-none disabled:opacity-40
+           disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-ember text-white hover:bg-ember-hot shadow-cta;
+  }
+  .btn-dark {
+    @apply btn bg-obsidian text-white hover:bg-coal;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent border border-pewter text-obsidian hover:border-obsidian;
+  }
+  .btn-ghost-dark {
+    @apply btn bg-transparent border border-white/25 text-white hover:border-white/60;
+  }
+  .btn-md { @apply px-5 py-2.5 text-sm; }
+  .btn-lg { @apply px-6 py-3.5 text-[15px]; }
+
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  .card {
+    @apply bg-white border border-mist rounded-card;
+  }
+  .tile {
+    @apply bg-white border border-mist rounded-tile;
+  }
+
+  /* ── Inputs ───────────────────────────────────────────────── */
+  .field {
+    @apply w-full rounded-input border border-pewter/70 bg-white px-4 py-3 text-[15px]
+           text-obsidian placeholder:text-ash outline-none transition-all
+           focus:border-ember focus:ring-2 focus:ring-ember/20;
+  }
+
+  /* ── Eyebrow / section label ──────────────────────────────── */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-ash;
+  }
+}

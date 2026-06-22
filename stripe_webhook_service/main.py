@@ -24,10 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, publish
+from shared.logging_config import configure_logging
+from shared.observability import attach_observability
 from shared.settings import settings
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("stripe-webhook-service")
+SERVICE = "stripe-webhook-service"
+configure_logging(SERVICE)
+log = logging.getLogger(SERVICE)
 
 producer = None
 
@@ -65,11 +68,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+attach_observability(app, SERVICE, deps=["kafka"])
 
 
 @app.post("/webhooks/stripe", status_code=200)

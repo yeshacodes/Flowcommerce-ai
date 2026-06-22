@@ -23,50 +23,51 @@ export default function Orders() {
   }, [offset])
 
   return (
-    <div className="p-8">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-slate-900">My Orders</h1>
-        <p className="text-sm text-slate-500 mt-0.5">{total} order{total !== 1 ? 's' : ''} total</p>
+    <div className="mx-auto max-w-page px-8 py-10">
+      <div className="mb-8">
+        <span className="eyebrow">History</span>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-obsidian">Orders</h1>
+        <p className="mt-1 text-sm text-ash">{total} order{total !== 1 ? 's' : ''} total</p>
       </div>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
+        <div className="mb-4 rounded-input border border-ember/30 bg-ember/5 px-4 py-3 text-sm text-ember-hot">{error}</div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="card overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-slate-400 text-sm">Loading…</div>
+          <div className="p-10 text-center text-sm text-ash">Loading…</div>
         ) : orders.length === 0 ? (
-          <div className="p-12 text-center">
-            <p className="text-slate-400 text-sm">No orders yet.</p>
-            <Link to="/products" className="mt-3 inline-block text-blue-600 text-sm font-medium hover:underline">
+          <div className="p-14 text-center">
+            <p className="text-sm text-ash">No orders yet.</p>
+            <Link to="/products" className="mt-3 inline-block text-sm font-semibold text-ember hover:text-ember-hot">
               Browse products →
             </Link>
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Order ID</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Total</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Placed</th>
+              <tr className="border-b border-mist bg-snow">
+                <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Order ID</th>
+                <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Status</th>
+                <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Total</th>
+                <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Placed</th>
                 <th className="px-6 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-mist">
               {orders.map(order => (
-                <tr key={order.order_id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4 font-mono text-xs text-slate-600">
+                <tr key={order.order_id} className="transition-colors hover:bg-snow">
+                  <td className="px-6 py-4 font-mono text-xs text-slate2">
                     {order.order_id.slice(0, 8)}…
                   </td>
                   <td className="px-6 py-4"><StatusBadge status={order.status} /></td>
-                  <td className="px-6 py-4 font-medium text-slate-900">{fmt(order.total_cents)}</td>
-                  <td className="px-6 py-4 text-slate-500">{fmtDate(order.created_at)}</td>
+                  <td className="px-6 py-4 font-medium text-obsidian">{fmt(order.total_cents)}</td>
+                  <td className="px-6 py-4 text-ash">{fmtDate(order.created_at)}</td>
                   <td className="px-6 py-4 text-right">
                     <Link
                       to={`/orders/${order.order_id}`}
-                      className="text-blue-600 hover:text-blue-700 font-medium"
+                      className="font-semibold text-ember hover:text-ember-hot"
                     >
                       View →
                     </Link>
@@ -78,18 +79,18 @@ export default function Orders() {
         )}
 
         {total > limit && (
-          <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between text-sm text-slate-500">
+          <div className="flex items-center justify-between border-t border-mist px-6 py-4 text-sm text-ash">
             <span>Showing {offset + 1}–{Math.min(offset + limit, total)} of {total}</span>
             <div className="flex gap-2">
               <button
                 disabled={offset === 0}
                 onClick={() => setOffset(o => Math.max(0, o - limit))}
-                className="px-3 py-1.5 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-pill border border-pewter/70 px-4 py-1.5 transition-colors hover:border-obsidian disabled:opacity-40"
               >← Prev</button>
               <button
                 disabled={offset + limit >= total}
                 onClick={() => setOffset(o => o + limit)}
-                className="px-3 py-1.5 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-pill border border-pewter/70 px-4 py-1.5 transition-colors hover:border-obsidian disabled:opacity-40"
               >Next →</button>
             </div>
           </div>
