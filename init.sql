@@ -36,8 +36,11 @@ CREATE TABLE IF NOT EXISTS users (
     email           TEXT NOT NULL UNIQUE,
     name            TEXT NOT NULL,
     hashed_password TEXT NOT NULL,
+    is_admin        BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Migrate existing installations that pre-date the is_admin column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS products (
     sku         TEXT PRIMARY KEY,

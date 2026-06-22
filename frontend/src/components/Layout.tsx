@@ -1,14 +1,16 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-const nav = [
+const baseNav = [
   { to: '/products', label: 'Products', icon: '🛍️' },
   { to: '/orders',   label: 'My Orders', icon: '📦' },
-  { to: '/admin',    label: 'Admin',     icon: '⚙️' },
 ]
 
 export default function Layout() {
   const { user, logout } = useAuth()
+  const nav = user?.is_admin
+    ? [...baseNav, { to: '/admin', label: 'Admin', icon: '⚙️' }]
+    : baseNav
   const navigate = useNavigate()
 
   const handleLogout = () => {

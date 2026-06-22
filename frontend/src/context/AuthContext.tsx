@@ -4,6 +4,7 @@ interface AuthUser {
   email: string
   customer_id: string
   token: string
+  is_admin: boolean
 }
 
 interface AuthContextValue {

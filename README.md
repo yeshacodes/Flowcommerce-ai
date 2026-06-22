@@ -345,6 +345,25 @@ Payment-service writes to the outbox synchronously in the same transaction that 
 
 ---
 
+## Promoting a user to admin (local development)
+
+Admin access is controlled by the `is_admin` column on the `users` table. New registrations always default to `false`. To promote your account:
+
+```sql
+-- Connect to the local Postgres container:
+docker exec -it <postgres-container-name> psql -U postgres -d orders
+
+-- Find your user:
+SELECT user_id, email, is_admin FROM users;
+
+-- Promote by email:
+UPDATE users SET is_admin = true WHERE email = 'you@example.com';
+```
+
+Then **sign out and sign back in** — the JWT must be re-issued to carry the new `is_admin: true` claim. After that, the Admin link appears in the sidebar and `/admin/stats` is accessible.
+
+Non-admin users who navigate directly to `/admin` are redirected to `/products`. The backend returns `403 Forbidden` for any non-admin JWT hitting `/admin/stats`, so the route is doubly guarded.
+
 ## Results
 
 > _Run the k6 load test and fill in these numbers:_

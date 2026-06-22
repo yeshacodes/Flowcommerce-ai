@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from shared.auth import TokenData, get_current_user
+from shared.auth import TokenData, get_current_user, require_admin
 from shared.db import get_pool
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, run_consumer
@@ -426,7 +426,7 @@ async def get_order(order_id: str, current_user: TokenData = Depends(get_current
 
 
 @app.get("/admin/stats")
-async def admin_stats(_: TokenData = Depends(get_current_user)):
+async def admin_stats(_: TokenData = Depends(require_admin)):
     pool = await get_pool()
     async with pool.acquire() as conn:
         status_rows = await conn.fetch(

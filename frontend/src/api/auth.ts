@@ -4,6 +4,7 @@ export interface AuthResponse {
   access_token: string
   token_type: string
   customer_id: string
+  is_admin: boolean
 }
 
 export const authApi = {
