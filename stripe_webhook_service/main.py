@@ -20,8 +20,8 @@ from contextlib import asynccontextmanager
 
 import stripe
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 
+from shared.cors import add_cors
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, publish
 from shared.logging_config import configure_logging
@@ -61,13 +61,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Stripe Webhook Service", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+add_cors(app)
 attach_observability(app, SERVICE, deps=["kafka"])
 
 

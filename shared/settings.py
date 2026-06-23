@@ -3,8 +3,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     kafka_bootstrap: str = "localhost:9092"
+    # Kafka auth — local default is plaintext with no credentials. Set
+    # security_protocol=SASL_SSL + mechanism/username/password for Confluent Cloud.
+    kafka_security_protocol: str = "PLAINTEXT"
+    kafka_sasl_mechanism: str = "PLAIN"
+    kafka_username: str = ""
+    kafka_password: str = ""
     postgres_dsn: str = "postgresql://postgres:postgres@localhost:5432/orders"
     redis_url: str = "redis://localhost:6379/0"
+    # Production frontend origin allowed by CORS (in addition to localhost dev).
+    frontend_origin: str = ""
+    # Inter-service base URLs (order-service calls siblings for health/copilot).
+    # Localhost defaults keep local dev working; override per-service on Render.
+    auth_service_url: str = "http://127.0.0.1:8004"
+    catalog_service_url: str = "http://127.0.0.1:8005"
+    order_service_url: str = "http://127.0.0.1:8000"
+    inventory_service_url: str = "http://127.0.0.1:8001"
+    payment_service_url: str = "http://127.0.0.1:8002"
+    notification_service_url: str = "http://127.0.0.1:8003"
+    stripe_webhook_service_url: str = "http://127.0.0.1:8006"
     payment_failure_rate: float = 0.2
     max_retries: int = 3
     jwt_secret: str = "change-me-in-production"

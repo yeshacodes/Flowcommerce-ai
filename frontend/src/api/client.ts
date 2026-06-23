@@ -1,7 +1,9 @@
+// Service base URLs. Production values come from Vite env vars (set in Vercel);
+// localhost fallbacks keep local development working with no config.
 export const SERVICES = {
-  auth: 'http://localhost:8004',
-  catalog: 'http://localhost:8005',
-  orders: 'http://localhost:8000',
+  auth: import.meta.env.VITE_AUTH_URL ?? 'http://localhost:8004',
+  catalog: import.meta.env.VITE_CATALOG_URL ?? 'http://localhost:8005',
+  orders: import.meta.env.VITE_ORDERS_URL ?? 'http://localhost:8000',
 }
 
 function getToken(): string | null {

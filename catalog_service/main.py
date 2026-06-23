@@ -3,10 +3,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from shared.auth import TokenData, require_admin
+from shared.cors import add_cors
 from shared.db import get_pool
 from shared.logging_config import configure_logging
 from shared.observability import attach_observability
@@ -65,13 +65,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Catalog Service", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+add_cors(app)
 attach_observability(app, SERVICE, deps=["postgres"])
 
 

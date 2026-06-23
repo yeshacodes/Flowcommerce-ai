@@ -5,7 +5,6 @@ from uuid import uuid4
 import bcrypt as _bcrypt
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from slowapi import Limiter
@@ -13,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from shared.auth import TokenData, create_access_token, get_current_user
+from shared.cors import add_cors
 from shared.db import get_pool
 from shared.logging_config import configure_logging
 from shared.observability import attach_observability
@@ -57,13 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Auth Service", lifespan=lifespan)
 app.state.limiter = limiter
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+add_cors(app)
 
 
 attach_observability(app, SERVICE, deps=["postgres"])

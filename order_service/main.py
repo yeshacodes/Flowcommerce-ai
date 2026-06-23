@@ -6,11 +6,11 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from shared.auth import TokenData, get_current_user, require_admin
+from shared.cors import add_cors
 from shared.db import get_pool
 from shared.events import Event, Topics
 from shared.kafka_utils import get_producer, run_consumer
@@ -32,14 +32,15 @@ log = logging.getLogger(SERVICE)
 
 # Internal map used by /admin/system-health to aggregate each service's
 # /health/details server-side (avoids cross-origin calls from the browser).
+# URLs are env-driven (localhost defaults for dev, per-service hosts on Render).
 OPS_SERVICES = {
-    "auth-service": "http://127.0.0.1:8004",
-    "catalog-service": "http://127.0.0.1:8005",
-    "order-service": "http://127.0.0.1:8000",
-    "inventory-service": "http://127.0.0.1:8001",
-    "payment-service": "http://127.0.0.1:8002",
-    "notification-service": "http://127.0.0.1:8003",
-    "stripe-webhook-service": "http://127.0.0.1:8006",
+    "auth-service": settings.auth_service_url,
+    "catalog-service": settings.catalog_service_url,
+    "order-service": settings.order_service_url,
+    "inventory-service": settings.inventory_service_url,
+    "payment-service": settings.payment_service_url,
+    "notification-service": settings.notification_service_url,
+    "stripe-webhook-service": settings.stripe_webhook_service_url,
 }
 producer = None
 consumer_task = None
@@ -228,13 +229,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Order Service", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+add_cors(app)
 
 
 # Exposes /health, /health/details, /metrics + request/correlation middleware.

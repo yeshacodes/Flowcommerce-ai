@@ -12,11 +12,28 @@ from .settings import settings
 log = logging.getLogger(__name__)
 
 
+def _auth_kwargs() -> dict:
+    """SASL_SSL/PLAIN credentials for managed Kafka (e.g. Confluent Cloud).
+
+    Returns empty dict for local plaintext Kafka (no username set), so the
+    existing Docker dev setup is unchanged.
+    """
+    if not settings.kafka_username:
+        return {}
+    return {
+        "security_protocol": settings.kafka_security_protocol,
+        "sasl_mechanism": settings.kafka_sasl_mechanism,
+        "sasl_plain_username": settings.kafka_username,
+        "sasl_plain_password": settings.kafka_password,
+    }
+
+
 async def get_producer() -> AIOKafkaProducer:
     producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap,
         value_serializer=lambda v: json.dumps(v).encode(),
         key_serializer=lambda k: k.encode() if isinstance(k, str) else k,
+        **_auth_kwargs(),
     )
     await producer.start()
     return producer
@@ -42,10 +59,12 @@ async def run_consumer(topics, group_id, handler):
         enable_auto_commit=False,
         auto_offset_reset="earliest",
         value_deserializer=lambda b: json.loads(b.decode()),
+        **_auth_kwargs(),
     )
     dlq = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap,
         value_serializer=lambda v: json.dumps(v).encode(),
+        **_auth_kwargs(),
     )
     await consumer.start()
     await dlq.start()

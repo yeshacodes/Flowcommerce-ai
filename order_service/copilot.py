@@ -29,15 +29,16 @@ from shared.settings import settings
 
 router = APIRouter()
 
-# Local copy of the service map (kept here to avoid a circular import with main).
+# Env-driven service map (kept here to avoid a circular import with main).
+# Localhost defaults for dev; per-service hosts on Render.
 COPILOT_SERVICES = {
-    "auth-service": "http://127.0.0.1:8004",
-    "catalog-service": "http://127.0.0.1:8005",
-    "order-service": "http://127.0.0.1:8000",
-    "inventory-service": "http://127.0.0.1:8001",
-    "payment-service": "http://127.0.0.1:8002",
-    "notification-service": "http://127.0.0.1:8003",
-    "stripe-webhook-service": "http://127.0.0.1:8006",
+    "auth-service": settings.auth_service_url,
+    "catalog-service": settings.catalog_service_url,
+    "order-service": settings.order_service_url,
+    "inventory-service": settings.inventory_service_url,
+    "payment-service": settings.payment_service_url,
+    "notification-service": settings.notification_service_url,
+    "stripe-webhook-service": settings.stripe_webhook_service_url,
 }
 
 LOW_STOCK_THRESHOLD = 80
