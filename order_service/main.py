@@ -230,7 +230,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Order Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -239,6 +239,10 @@ app.add_middleware(
 
 # Exposes /health, /health/details, /metrics + request/correlation middleware.
 attach_observability(app, SERVICE, deps=["postgres", "kafka", "redis"])
+
+# AI Operations Copilot endpoints (admin-only, read-only) — additive.
+from order_service.copilot import router as copilot_router  # noqa: E402
+app.include_router(copilot_router)
 
 
 @app.exception_handler(Exception)
@@ -316,13 +320,30 @@ async def create_order(
 
         skus = [it.sku for it in req.items]
         product_rows = await conn.fetch(
-            "SELECT sku, price_cents FROM products WHERE sku = ANY($1::text[])", skus
+            "SELECT p.sku, p.price_cents, p.is_active, COALESCE(i.available, 0) AS available "
+            "FROM products p LEFT JOIN inventory i ON i.sku = p.sku "
+            "WHERE p.sku = ANY($1::text[])",
+            skus,
         )
         price_map = {r["sku"]: r["price_cents"] for r in product_rows}
+        avail_map = {r["sku"]: r["available"] for r in product_rows}
+        active_map = {r["sku"]: r["is_active"] for r in product_rows}
 
         missing = [s for s in skus if s not in price_map]
         if missing:
             raise HTTPException(status_code=422, detail=f"Unknown SKUs: {missing}")
+
+        # Additive validation: reject obviously un-orderable items before creating
+        # the order. The saga's inventory reservation remains the authoritative
+        # check — this just gives the customer an immediate, clear error.
+        inactive = [s for s in skus if not active_map.get(s, True)]
+        if inactive:
+            raise HTTPException(status_code=409, detail=f"Product not available: {inactive}")
+        short = [
+            it.sku for it in req.items if it.quantity > avail_map.get(it.sku, 0)
+        ]
+        if short:
+            raise HTTPException(status_code=409, detail=f"Insufficient stock: {short}")
 
         total_cents = sum(price_map[it.sku] * it.quantity for it in req.items)
         order_id = uuid4()
@@ -441,6 +462,80 @@ async def get_order(order_id: str, current_user: TokenData = Depends(get_current
         "items": [dict(i) for i in items],
         "payment_intent_id": row["payment_intent_id"],
         "payment_provider": row["payment_provider"] or "simulated",
+    }
+
+
+@app.get("/orders/{order_id}/context")
+async def get_order_context(order_id: str, current_user: TokenData = Depends(get_current_user)):
+    """Read-only customer order context for the customer AI assistant.
+
+    The response is scoped to the authenticated customer's order and is built
+    from existing order rows plus the transactional outbox event log.
+    """
+    pool = await get_pool()
+    try:
+        order_uuid = UUID(order_id)
+    except ValueError:
+        return Response(status_code=404)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, total_cents, created_at, updated_at, customer_id, "
+            "payment_intent_id, payment_provider, correlation_id "
+            "FROM orders WHERE order_id=$1",
+            order_uuid,
+        )
+        if not row or row["customer_id"] != current_user.customer_id:
+            return Response(status_code=404)
+
+        items = await conn.fetch(
+            "SELECT sku, quantity, unit_price_cents FROM order_items WHERE order_id=$1",
+            order_uuid,
+        )
+        event_rows = await conn.fetch(
+            """
+            SELECT id, topic, payload, created_at, published_at
+            FROM outbox
+            WHERE payload->>'order_id' = $1
+            ORDER BY created_at ASC, id ASC
+            """,
+            order_id,
+        )
+
+    events = []
+    for r in event_rows:
+        payload = r["payload"]
+        if isinstance(payload, str):
+            import json as _json
+            payload = _json.loads(payload)
+        events.append({
+            "id": r["id"],
+            "topic": r["topic"],
+            "order_id": payload.get("order_id"),
+            "correlation_id": payload.get("correlation_id"),
+            "saga_id": payload.get("saga_id"),
+            "event_id": payload.get("event_id"),
+            "type": payload.get("type"),
+            "occurred_at": payload.get("occurred_at"),
+            "created_at": r["created_at"].isoformat(),
+            "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+            "payload": payload,
+        })
+
+    return {
+        "order": {
+            "order_id": order_id,
+            "status": row["status"],
+            "total_cents": row["total_cents"],
+            "created_at": row["created_at"].isoformat(),
+            "updated_at": row["updated_at"].isoformat(),
+            "items": [dict(i) for i in items],
+            "payment_intent_id": row["payment_intent_id"],
+            "payment_provider": row["payment_provider"] or "simulated",
+            "correlation_id": str(row["correlation_id"]) if row["correlation_id"] else None,
+        },
+        "events": events,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

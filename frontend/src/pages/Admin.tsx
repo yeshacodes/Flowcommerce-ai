@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { catalogApi, Product } from '../api/catalog'
 import { AdminStats, ordersApi } from '../api/orders'
 import StatusBadge from '../components/StatusBadge'
+import ProductManager from '../components/admin/ProductManager'
 
 const fmt = (cents: number) => `$${(cents / 100).toFixed(2)}`
 const fmtDate = (iso: string) => new Date(iso).toLocaleString()
@@ -24,13 +24,12 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export default function Admin() {
   const [stats, setStats] = useState<AdminStats | null>(null)
-  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    Promise.all([ordersApi.adminStats(), catalogApi.listProducts()])
-      .then(([s, p]) => { setStats(s); setProducts(p) })
+    ordersApi.adminStats()
+      .then(setStats)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
@@ -83,77 +82,39 @@ export default function Admin() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        {/* Recent orders */}
-        <div>
-          <SectionLabel>Recent Orders</SectionLabel>
-          <div className="card overflow-hidden">
-            {stats.recent_orders.length === 0 ? (
-              <p className="p-6 text-sm text-ash">No orders yet.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-mist bg-snow">
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Order</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Status</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Total</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Placed</th>
+      {/* Recent orders */}
+      <div className="mb-8">
+        <SectionLabel>Recent Orders</SectionLabel>
+        <div className="card overflow-hidden">
+          {stats.recent_orders.length === 0 ? (
+            <p className="p-6 text-sm text-ash">No orders yet.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-mist bg-snow">
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Order</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Status</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Total</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Placed</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-mist">
+                {stats.recent_orders.map(order => (
+                  <tr key={order.order_id} className="transition-colors hover:bg-snow">
+                    <td className="px-5 py-3 font-mono text-xs text-slate2">{order.order_id.slice(0, 8)}…</td>
+                    <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
+                    <td className="px-5 py-3 font-medium text-obsidian">{fmt(order.total_cents)}</td>
+                    <td className="px-5 py-3 text-xs text-ash">{fmtDate(order.created_at)}</td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-mist">
-                  {stats.recent_orders.map(order => (
-                    <tr key={order.order_id} className="transition-colors hover:bg-snow">
-                      <td className="px-5 py-3 font-mono text-xs text-slate2">
-                        {order.order_id.slice(0, 8)}…
-                      </td>
-                      <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
-                      <td className="px-5 py-3 font-medium text-obsidian">{fmt(order.total_cents)}</td>
-                      <td className="px-5 py-3 text-xs text-ash">{fmtDate(order.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {/* Inventory */}
-        <div>
-          <SectionLabel>Inventory</SectionLabel>
-          <div className="card overflow-hidden">
-            {products.length === 0 ? (
-              <p className="p-6 text-sm text-ash">No products.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-mist bg-snow">
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Product</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Price</th>
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-ash">Stock</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-mist">
-                  {products.map(p => (
-                    <tr key={p.sku} className="transition-colors hover:bg-snow">
-                      <td className="px-5 py-3">
-                        <p className="font-medium text-obsidian">{p.name}</p>
-                        <p className="font-mono text-xs text-pewter">{p.sku}</p>
-                      </td>
-                      <td className="px-5 py-3 text-slate2">{fmt(p.price_cents)}</td>
-                      <td className="px-5 py-3">
-                        <span className={`inline-flex items-center gap-1.5 font-semibold ${p.stock_available === 0 ? 'text-ember-hot' : p.stock_available < 20 ? 'text-amber-500' : 'text-emerald-600'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${p.stock_available === 0 ? 'bg-ember' : p.stock_available < 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                          {p.stock_available}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
+
+      {/* Product + inventory management */}
+      <ProductManager />
     </div>
   )
 }

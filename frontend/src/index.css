@@ -35,6 +35,7 @@ body {
   .btn-ghost-dark {
     @apply btn bg-transparent border border-white/25 text-white hover:border-white/60;
   }
+  .btn-sm { @apply px-4 py-2 text-[13px] leading-none; }
   .btn-md { @apply px-5 py-2.5 text-sm; }
   .btn-lg { @apply px-6 py-3.5 text-[15px]; }
 

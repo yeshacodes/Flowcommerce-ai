@@ -1,5 +1,10 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import FloatingOrderAssistant from './customer-copilot/FloatingOrderAssistant'
+
+// Customer-facing pages where the floating assistant should appear.
+const CUSTOMER_ASSISTANT_PATHS = [/^\/products$/, /^\/checkout$/, /^\/orders$/, /^\/orders\/[^/]+$/]
+const showsAssistant = (path: string) => CUSTOMER_ASSISTANT_PATHS.some(re => re.test(path))
 
 const baseNav = [
   { to: '/products', label: 'Products', icon: ProductsIcon },
@@ -9,12 +14,14 @@ const baseNav = [
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const nav = user?.is_admin
     ? [
         ...baseNav,
         { to: '/admin', label: 'Admin', icon: AdminIcon },
         { to: '/operations', label: 'Operations', icon: OperationsIcon },
+        { to: '/copilot', label: 'AI Copilot', icon: CopilotIcon },
       ]
     : baseNav
 
@@ -83,6 +90,8 @@ export default function Layout() {
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>
+
+      {showsAssistant(location.pathname) && <FloatingOrderAssistant />}
     </div>
   )
 }
@@ -123,6 +132,15 @@ function OperationsIcon({ className = '' }: IconProps) {
   return (
     <svg className={`h-5 w-5 ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l2 5 4-12 2 7h6" />
+    </svg>
+  )
+}
+
+function CopilotIcon({ className = '' }: IconProps) {
+  return (
+    <svg className={`h-5 w-5 ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 15.5 18.8 17.5 20.8 18.3 18.8 19.1 18 21 17.2 19.1 15.2 18.3 17.2 17.5 18 15.5Z" />
     </svg>
   )
 }

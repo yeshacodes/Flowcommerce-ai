@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     from_email: str = "onboarding@resend.dev"
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    # AI Copilot (Phase 2, optional). When openai_api_key is set, /admin/copilot/query
+    # uses an OpenAI-compatible LLM; otherwise it falls back to the rule-based engine.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

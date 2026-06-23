@@ -15,6 +15,7 @@ export interface Order {
   items?: OrderItem[]
   payment_intent_id?: string | null
   payment_provider?: string
+  correlation_id?: string | null
 }
 
 export interface OrderListResponse {
@@ -94,6 +95,9 @@ export const ordersApi = {
 
   get: (orderId: string) =>
     apiFetch<Order>(SERVICES.orders, `/orders/${orderId}`),
+
+  context: (orderId: string) =>
+    apiFetch<import('../types/customerCopilot').CustomerOrderContext>(SERVICES.orders, `/orders/${orderId}/context`),
 
   adminStats: () =>
     apiFetch<AdminStats>(SERVICES.orders, '/admin/stats'),

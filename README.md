@@ -235,7 +235,7 @@ cd frontend && npm run dev
 
 ---
 
-## Local setup
+## Local Development
 
 ### Prerequisites
 
@@ -244,57 +244,77 @@ cd frontend && npm run dev
 - Node.js 18+
 - (Optional) Stripe CLI for webhook forwarding
 
-### 1. Start infrastructure
+### First-time setup
 
-```bash
-docker compose up -d
-# Starts: Kafka (KRaft), PostgreSQL, Redis
-# PostgreSQL schema and seed data load automatically from init.sql
-```
+Run once to create the Python environment, install dependencies, and configure env vars:
 
-### 2. Python environment
-
-```bash
+```powershell
 python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env          # edit as needed
+Copy-Item .env.example .env        # edit as needed
+
+cd frontend; npm install; cd ..
 ```
 
-### 3. Run backend services
+### Start the platform
 
-Open a terminal for each:
+Once setup is complete, the entire stack can be started with a single command:
 
-```bash
-make auth           # auth-service       :8004
-make catalog        # catalog-service    :8005
-make order          # order-service      :8000
-make inventory      # inventory-service  :8001
-make payment        # payment-service    :8002
-make notification   # notification-service :8003
-make webhook        # stripe-webhook-service :8006  (optional, Stripe only)
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\dev.ps1
 ```
 
-### 4. Run the frontend
+This command automatically:
 
-```bash
-cd frontend
-npm install
-npm run dev
-# → http://localhost:5173
+- Starts **PostgreSQL, Redis, and Kafka** via Docker Compose
+- Opens separate terminals for all **backend services and workers**
+- Starts the **React frontend**
+- Boots the entire **FlowCommerce development environment**
+
+When it finishes, the app is available at **http://localhost:5173** and each service exposes a `/health` endpoint (auth `:8004`, catalog `:8005`, order `:8000`, inventory `:8001`, payment `:8002`, notification `:8003`, webhook `:8006`).
+
+> PostgreSQL schema and seed data load automatically from `init.sql` on first start.
+
+### Stop infrastructure
+
+```powershell
+.\scripts\stop.ps1
 ```
 
-### 5. Verify end-to-end (CLI)
+This command:
 
-```bash
-python scripts/smoke_test.py
+- Stops the **PostgreSQL, Redis, and Kafka** containers
+- Removes the Docker network
+- Leaves service terminals open so logs can still be inspected
+
+> Press `Ctrl + C` in each spawned terminal (or close them) to completely shut down all backend services and the frontend.
+
+### Verify end-to-end (CLI)
+
+```powershell
+python scripts\smoke_test.py
 # Registers a fresh user, places an order, polls until CONFIRMED or FAILED.
 # Works without Stripe keys — uses the simulated payment path.
+```
+
+### Manual startup (alternative)
+
+Prefer to run services individually? Start infrastructure, then launch each service in its own terminal:
+
+```powershell
+docker compose up -d            # Kafka (KRaft), PostgreSQL, Redis
+
+make auth           # auth-service          :8004
+make catalog        # catalog-service       :8005
+make order          # order-service         :8000
+make inventory      # inventory-service     :8001
+make payment        # payment-service       :8002
+make notification   # notification-service  :8003
+make webhook        # stripe-webhook-service :8006  (optional, Stripe only)
+
+cd frontend; npm run dev        # → http://localhost:5173
 ```
 
 ### Environment variables

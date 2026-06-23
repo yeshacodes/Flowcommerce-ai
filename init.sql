@@ -47,8 +47,13 @@ CREATE TABLE IF NOT EXISTS products (
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     price_cents INT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    is_active   BOOLEAN NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Migrate existing installations that pre-date these columns.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_active  BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- Seed products matching the existing inventory SKUs
 INSERT INTO products (sku, name, description, price_cents) VALUES
