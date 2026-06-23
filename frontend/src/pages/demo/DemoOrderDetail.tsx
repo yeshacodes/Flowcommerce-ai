@@ -1,9 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
-import { demoEvents, demoFailureReasons, demoProducts, findDemoOrder } from '../../data/demoData'
+import { demoFailureReasons, demoProducts, findDemoOrder } from '../../data/demoData'
 import StatusBadge from '../../components/StatusBadge'
-import OrderAssistant from '../../components/order/OrderAssistant'
-import OrderJourney from '../../components/order/OrderJourney'
-import type { CustomerOrderContext } from '../../types/customerCopilot'
 
 const fmt = (cents: number) => `$${(cents / 100).toFixed(2)}`
 const fmtDate = (iso: string) => new Date(iso).toLocaleString()
@@ -51,13 +48,6 @@ export default function DemoOrderDetail() {
 
   const timeline = buildTimeline(order.status, order.created_at, order.updated_at)
   const reason = demoFailureReasons[order.order_id]
-  const assistantContext: CustomerOrderContext = {
-    order,
-    events: demoEvents
-      .filter(event => event.order_id === order.order_id)
-      .sort((a, b) => new Date(a.occurred_at ?? a.created_at).getTime() - new Date(b.occurred_at ?? b.created_at).getTime()),
-    generated_at: new Date().toISOString(),
-  }
 
   return (
     <div className="max-w-3xl p-8">
@@ -155,8 +145,6 @@ export default function DemoOrderDetail() {
         </div>
       </div>
 
-      <OrderJourney context={assistantContext} />
-      <OrderAssistant initialContext={assistantContext} />
     </div>
   )
 }
