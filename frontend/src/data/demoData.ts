@@ -210,4 +210,4 @@ export const demoEvents: OpsEvent[] = [
   },
 ]
 
-export const GITHUB_URL = 'https://github.com/yeshabhavsar/flowcommerce-ai'
+export const GITHUB_URL = 'https://github.com/yeshacodes/Flowcommerce-ai'
