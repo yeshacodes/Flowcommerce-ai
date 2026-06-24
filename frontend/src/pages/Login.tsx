@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
+import { backendConfigured } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import AuthBrandPanel from '../components/AuthBrandPanel'
 
@@ -40,6 +41,14 @@ export default function Login() {
             <h1 className="text-2xl font-bold tracking-tight text-obsidian">Sign in</h1>
             <p className="mt-1.5 text-sm text-ash">Welcome back to your commerce console.</p>
           </div>
+
+          {!backendConfigured && (
+            <div className="mb-5 rounded-input border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <p className="font-medium">Backend services are not deployed for the public demo.</p>
+              <p className="mt-1 text-amber-700">Use Explore Demo instead — it runs on simulated data with no login.</p>
+              <Link to="/demo/products" className="btn-primary btn-sm mt-3 inline-flex">Explore Demo →</Link>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (

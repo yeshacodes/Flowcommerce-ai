@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { backendConfigured } from '../api/client'
 import { GITHUB_URL } from '../data/demoData'
 
 /**
@@ -80,7 +81,12 @@ export default function Landing() {
         <nav className="flex items-center gap-3">
           <Link to="/demo/products" className="text-sm font-medium text-white/70 hover:text-white">Demo</Link>
           <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-white/70 hover:text-white">GitHub</a>
-          <Link to="/login" className="rounded-pill border border-white/15 px-4 py-1.5 text-sm font-medium text-white hover:bg-white/10">Sign in</Link>
+          {/* Sign in is only meaningful when a backend is reachable (local dev or
+              a configured deployment). In the public demo it's hidden as a quiet
+              text link so it never looks like a broken primary action. */}
+          {backendConfigured && (
+            <Link to="/login" className="rounded-pill border border-white/15 px-4 py-1.5 text-sm font-medium text-white hover:bg-white/10">Sign in</Link>
+          )}
         </nav>
       </header>
 
@@ -103,7 +109,7 @@ export default function Landing() {
             <Button to="/demo/products" variant="primary">Explore Demo</Button>
             <Button href={GITHUB_URL} variant="ghost">View GitHub</Button>
           </div>
-          <p className="mt-4 text-xs text-white/40">No login required · viewing simulated data</p>
+          <p className="mt-4 text-xs text-white/40">Public demo uses simulated data and does not require login.</p>
         </div>
       </section>
 

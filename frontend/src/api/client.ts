@@ -6,6 +6,16 @@ export const SERVICES = {
   orders: import.meta.env.VITE_ORDERS_URL ?? 'http://localhost:8000',
 }
 
+// Whether a usable backend is reachable for real auth/API calls.
+// - Local dev (served from localhost): true — /login behaves exactly as before.
+// - Deployed with VITE_*_URL set to real hosts: true.
+// - Deployed (e.g. Vercel) with no backend URLs configured (still localhost):
+//   false — the public demo has no backend, so we steer users to Explore Demo.
+const _apiIsLocal = /localhost|127\.0\.0\.1/.test(SERVICES.auth)
+const _servedFromLocalhost =
+  typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)
+export const backendConfigured = !_apiIsLocal || _servedFromLocalhost
+
 function getToken(): string | null {
   try {
     const raw = localStorage.getItem('fc_user')
